@@ -1,10 +1,21 @@
 {
+  "files.exclude": {
+    "**/.idea": true,
+    "**/__pycache__": true,
+    "**/.pytest_cache": true,
+    "**/test-reports": true,
+    "**/*.egg-info": true
+  },
   "editor.formatOnSave": true,
   "python.analysis.importFormat": "relative",
+  "notebook.codeActionsOnSave": {
+    "source.organizeImports": true
+  },
   "[python]": {
     "editor.defaultFormatter": "charliermarsh.ruff",
     "editor.codeActionsOnSave": {
-      "source.fixAll": "explicit"
+      "source.fixAll": "explicit",
+      "source.organizeImports": "explicit"
     }
   },
   "[javascript][json][typescript]": {
