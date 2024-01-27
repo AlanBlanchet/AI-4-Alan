@@ -1,4 +1,5 @@
 from abc import abstractmethod
+from typing import Any, Mapping, TypeVar
 
 import numpy as np
 import torch
@@ -9,30 +10,24 @@ from .collect.buffer import DequeueBuffer
 from .collect.collector import Collector
 from .utils.hyperparam import Hyperparam, to_hyperparam
 
+T = TypeVar("T")
+
 
 class Policy(nn.Module):
-    def __init__(self, collector: Collector):
+    def __init__(self, collector: Collector, stacked=False):
         super().__init__()
         self.collector = collector
         self.logger: SummaryWriter = None
         self.in_state = self.collector.state_shape
-        self.out_actions = self.collector.action_shape
+        self.out_actions = self.collector.out_action
+        self.stacked = stacked
+        self.states = {}
+
+    def setup(self):
+        ...
 
     @abstractmethod
-    def collect(self):
-        """
-        Allows for the algorithm to define its own data collection method.
-
-        ## Returns:
-        - `data` (any): The collected data.
-
-        ## Raises:
-        - `NotImplementedError`: If the method is not implemented in a derived class.
-        """
-        raise NotImplementedError()
-
-    @abstractmethod
-    def act(self, state):
+    def act(self, state: torch.Tensor):
         """
         Base act method for RL algorithms.
 
@@ -46,10 +41,23 @@ class Policy(nn.Module):
 
     @abstractmethod
     def batch_act(self, states: torch.Tensor) -> torch.Tensor:
+        """
+        Perform batch action selection based on the given states.
+
+        ## Parameters:
+        - `states` (`torch.Tensor`): The states for which to select actions.
+
+        ## Returns:
+        - `actions` (`torch.Tensor`): The selected actions for each state.
+        """
         ...
 
     @abstractmethod
     def forward(self, episodes: list[tuple[torch.Tensor, ...]]) -> torch.Tensor:
+        ...
+
+    @abstractmethod
+    def step(self):
         ...
 
     @property
@@ -62,6 +70,25 @@ class Policy(nn.Module):
 
     def set_logger(self, logger):
         self.logger = logger
+
+    def state_dict(self, destination=None, prefix="", keep_vars=False):
+        state_dict = super().state_dict(
+            destination=destination, prefix=prefix, keep_vars=keep_vars
+        )
+        state_dict.update(self.states)
+        return state_dict
+
+    def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = False):
+        [
+            setattr(self, k, state_dict.pop(k))
+            for k in self.states.keys()
+            if k in state_dict
+        ]
+        super().load_state_dict(state_dict, strict)
+
+    def register_state(self, name: str, variable: T):
+        self.states.update({name: variable})
+        return variable
 
 
 class EpsilonGreedyLearner(Policy):

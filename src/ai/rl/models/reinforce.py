@@ -69,10 +69,12 @@ class REINFORCE(Policy):
                 )  # B
 
                 rewards_to_gos.append(rewards_to_go.mean().item())
-                # Normalise
-                rewards_to_go = (rewards_to_go - rewards_to_go.mean()) / (
-                    rewards_to_go.std(correction=0) + 1e-5
-                )
+
+                if rewards_to_go.shape[0] > 1:
+                    # Normalise
+                    rewards_to_go = (rewards_to_go - rewards_to_go.mean()) / (
+                        rewards_to_go.std() + 1e-5
+                    )
 
                 # Policy gradient
                 probs = self.batch_act(states)

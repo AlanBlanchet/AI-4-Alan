@@ -91,11 +91,13 @@ class VPG(Policy):
 
                 # Advantage is just the difference between the return and the baseline
                 advantages = rewards_to_go - estimate_baselines  # B
-                advantages = (advantages - advantages.mean()) / (
-                    advantages.std(correction=0) + 1e-5
-                )
-                advantages_stats[0].append(advantages.mean().item())
-                advantages_stats[1].append(advantages.var().item())
+
+                if advantages.shape[0] > 1:
+                    advantages = (advantages - advantages.mean()) / (
+                        advantages.std(correction=0) + 1e-5
+                    )
+                    advantages_stats[0].append(advantages.mean().item())
+                    advantages_stats[1].append(advantages.var().item())
 
                 # Policy gradient
                 probs = self.batch_act(states)

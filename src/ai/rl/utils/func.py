@@ -35,11 +35,11 @@ def random_run_name(num_words=3):
     return "-".join([generator.get_random_word().lower() for _ in range(num_words)])
 
 
-def parse_tensor(data, device: torch.device, dtype=torch.float32):
+def parse_tensor(data, device: torch.device = "cpu", dtype=torch.float32):
     if isinstance(data, np.ndarray):
         data = torch.from_numpy(data)
     elif isinstance(data, torch.Tensor):
-        return data.clone().detach()
+        data = data.clone().detach()
     elif isinstance(data, (list, tuple)):
         if isinstance(data[0], np.ndarray):
             data = torch.stack([torch.from_numpy(d) for d in data])

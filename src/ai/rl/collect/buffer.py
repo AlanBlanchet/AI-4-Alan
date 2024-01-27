@@ -2,6 +2,7 @@ import random
 from abc import ABC
 from collections import deque
 from itertools import islice
+from typing import Iterator
 
 import torch
 
@@ -11,6 +12,9 @@ class BaseBuffer(ABC):
     def buffer_count(self):
         return len(self.buffer)
 
+    def __init__(self) -> None:
+        self.buffer_sample_count = 0
+
     def push(self, *args):
         """Save a transition"""
         self.buffer.append(args)
@@ -19,16 +23,22 @@ class BaseBuffer(ABC):
         self.buffer.clear()
         self.buffer_sample_count = 0
 
-    def sample(self, batch_size: int):
-        # [(s, a, r, s', d), ...)]
-        transition = random.sample(self.buffer, batch_size)
+    def sample(self, batch_size: int, stacks=1):
+        idx = random.sample(range(len(self) - stacks + 1), batch_size)
+
+        # [zip[s, a, r, s', d], ...]
+        item_stacks = [zip(*self[i : i + stacks]) for i in idx]
+
         self.buffer_sample_count += 1
+        return item_stacks
 
-        # [(s, ...), (a, ...), ...]
-        return zip(*transition)
+    def extract(self, num: int = None):
+        if num is None:
+            return zip(*self.buffer)
+        return zip(*self[:num])
 
-    def extract(self):
-        return zip(*self.buffer)
+    def slice(self, start: int, end: int) -> Iterator[torch.Tensor]:
+        return zip(*self[start:end])
 
     def __getitem__(self, key):
         if isinstance(key, slice):
@@ -42,7 +52,7 @@ class BaseBuffer(ABC):
             return self.buffer[key]
 
         if isinstance(key, list):
-            return zip(*[self.buffer[i] for i in key])
+            return [self.buffer[i] for i in key]
 
         raise TypeError("Invalid argument type.")
 
@@ -82,11 +92,13 @@ class BaseBuffer(ABC):
 
 class Buffer(BaseBuffer):
     def __init__(self):
+        super().__init__()
         self.buffer = []
 
 
 class DequeueBuffer(BaseBuffer):
     def __init__(self, size: int = 10000):
+        super().__init__()
         self.size = size
         self.buffer: deque[tuple(torch.Tensor)] = self._create_deque()
 
