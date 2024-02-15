@@ -1,149 +1,110 @@
 import json
-import pickle
 from pathlib import Path
 from time import time
-from typing import Literal
 
-import matplotlib.pyplot as plt
-import seaborn as sns
+import cv2
 import torch
 from tensorboardX import SummaryWriter
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 from ai.utils.paths import AIPaths
 
-from .collect.collector import COLLECTION_OF, Collector
-from .policy import Policy
+from .agent.agent import Agent
+from .env.environment import Environment
 from .utils.func import random_run_name
 
 
 class Trainer:
-    """
-    Collects data from the environment and trains the agent.
-    """
-
     def __init__(
         self,
-        agent: Policy,
-        reward_agg: Literal["sum", "mean"] = "mean",
-        tqdm_reward_update_s: float = 0.2,
+        agent: Agent,
         run_name: str = random_run_name(),
+        device: torch.device | int | str = None,
+        **kwargs,
     ):
         self.agent = agent
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.tqdm_reward_update_s = tqdm_reward_update_s
-        self.train_mode_ = "rgb_array"
-        self.run_name = run_name
-        self.logger = SummaryWriter(AIPaths.tensorboard / self.run_name)
-        self.agent.set_logger(self.logger)
-        self.collector.set_logger(self.logger)
-        self.collector.set_policy(agent)
-        self.reward_agg = reward_agg
-        self._loaded = False
-        self.eval_steps = 100
+        self.eval_env = self.agent._env.clone()
 
-        self.setup = False
+        if device is None:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            self.device = torch.device(device)
+
+        self.run_name = run_name
+
+        self.run_p = AIPaths.runs_p / self.run_name
+        self.vid_p = self.run_p / "vids"
+        self.vid_p.mkdir(parents=True, exist_ok=True)
+
+        self.logger = SummaryWriter(self.run_p)
+
+        self.eval_steps = 10
+        self.evals_ = 0
+        self._loaded = False
+
+        for k, v in kwargs.items():
+            setattr(self, k, v)
 
         torch.autograd.set_detect_anomaly(True)
 
-    @property
-    def collector(self):
-        return self.agent.collector
-
-    def _training(self):
-        # Make sure we are in a train render mode
-        if self.train_mode_ is None:
-            self.train_mode_ = self.collector.render_mode
-        if self.train_mode_ != self.collector.render_mode:
-            self.collector.set_render(self.train_mode_)
-
+    def start(self, steps=1000):
+        self.agent.train()
         self.agent.to(self.device)
 
-    def _setup(self):
-        if not self.setup and not self._loaded:
-            self.agent.setup()
-            self.setup = True
-
-    def train(self, agent_steps=4):
-        self._training()
-
-        self.agent.train()
-        self.collector.train()
-        self.collector.reset()
-        self._setup()
-
-        return self._run(agent_steps, "train")
-
-    def eval(self, steps=32):
-        self._training()
-
-        self.agent.eval()
-        self.collector.eval()
-        self.collector.reset()
-
-        assert self.setup, "Agent must be setup before evaluation"
-
-        return self._run(steps, "eval")
-
-    def test(self, collection_steps=4, of: COLLECTION_OF = "episodes"):
-        self._setup()
-        self.agent.eval()
-        self.collector.set_render("human")
-        self.collector.eval()
-        self.collector.reset()
-
-        episode = 0
-        if of == "episodes":
-            while episode < collection_steps:
-                _, __, reward, ___, done = self.collector.collect_step(store=False)
-
-                if done:
-                    episode += 1
-                    # self.rewards_.append(reward)
-        elif of == "steps":
-            for step in range(collection_steps):
-                _, __, ___, ____, done = self.collector.collect_step(store=False)
-
-                if done:
-                    episode += 1
-                    # self.rewards_.append(reward)
-        self.collector.clean()
-
-    def _run(self, agent_steps: int, mode="train"):
         start_time = time()
-        delta_time = 0
 
-        pbar = tqdm(range(int(agent_steps)))
+        pbar = tqdm(range(int(steps)))
 
         for agent_step in pbar:
             delta_time = time() - start_time
 
-            env_data = self.agent.step()
-            _, actions, rewards, _, _ = env_data
+            metrics = self.agent.learn()
 
-            agg = torch.mean if self.reward_agg == "mean" else torch.sum
-            reduced_reward = agg(rewards).item()
+            for k, v in metrics.items():
+                self.logger.add_scalar(k, v, agent_step)
 
-            self.logger.add_scalar(
-                f"trainer_{mode}/reward", reduced_reward, self.agent.global_step
-            )
+            if agent_step > 0 and agent_step % self.eval_steps == 0:
+                self.eval()
+                self.agent.train()
 
-            for idx, action in enumerate(self.collector.action_names):
-                self.logger.add_scalar(
-                    f"actions_{mode}/{action}",
-                    (actions.argmax(-1) == idx).sum().item() / actions.shape[0],
-                    self.agent.global_step,
+            if delta_time > 0.2:
+                pbar.set_description_str(
+                    f"{' | '.join([f'{k}={v:.2f}' for k, v in metrics.items()])}"
                 )
+                start_time = time()
 
-            if mode == "train":
-                self.agent(env_data)
+    def eval(self):
+        # Current train env
+        train_env = self.agent._env
 
-            if delta_time > self.tqdm_reward_update_s:
-                start_time += self.tqdm_reward_update_s
-                delta_time = 0
-                pbar.set_description(
-                    f"Step: {agent_step} | Reward: {reduced_reward:<.4f}"
-                )
+        # Move the agent into the evaluation zone
+        self.agent.eval(self.eval_env)
+
+        pbar = tqdm(leave=False)
+
+        done = False
+        i = 0
+        dones = 0
+        writer = cv2.VideoWriter(
+            str(self.vid_p / f"eval_{self.evals_}.avi"),
+            cv2.VideoWriter_fourcc(*"MJPG"),
+            30,
+            (160, 210),
+        )
+        self.agent._env.reset()
+        while not done:
+            obs, *_, done = self.agent.interact()
+            pbar.update()
+            if done:
+                dones += 1
+            i += 1
+            writer.write(obs)
+            pbar.set_description_str(f"Eval n°{self.evals_} - {i} ")
+
+        self.evals_ += 1
+
+        # Put the agent back into its training environment
+        self.agent.drop(train_env)
 
     @classmethod
     def _resolve_path(cls, path: str | Path):
@@ -166,27 +127,25 @@ class Trainer:
         name = type(self.agent).__name__
 
         params = {}
-        params["env"] = self.collector._env.spec.id
-        params["agent_mod"] = self.agent.__module__
+        params["env"] = self.agent._env.env_name
         params["agent"] = name
+        params["agent_mod"] = self.agent.__module__
         params["trainer"] = {
-            "reward_mode": self.reward_agg,
-            "tqdm_reward_update_s": self.tqdm_reward_update_s,
+            "device": self.device.type,
+            "eval_steps": self.eval_steps,
+            "evals_": self.evals_,
+            "run_name": self.run_name,
         }
 
         # Model
         torch.save(self.agent.state_dict(), path / "agent.pt")
-
-        # Collector
-        with open(path / "collector.pkl", "wb+") as f:
-            f.write(pickle.dumps(self.collector))
 
         # Config
         with open(path / "params.json", "w+") as f:
             f.write(json.dumps(params))
 
     @classmethod
-    def load(cls, path: str | Path, render_mode: str = "human"):
+    def load(cls, path: str | Path):
         import importlib
 
         path = cls._resolve_path(path)
@@ -197,25 +156,16 @@ class Trainer:
             params = json.loads(f.read())
             trainer_params = params["trainer"]
 
-        with open(path / "collector.pkl", "rb") as f:
-            collector: Collector = pickle.loads(f.read())
-            collector.setup()
+        env = Environment(params["env"])
 
         # Load agent
         agent_name = str(params["agent"])
         agent_mod = str(params["agent_mod"])
         agent_mod = importlib.import_module(agent_mod)
         agent_class = getattr(agent_mod, agent_name)
-        agent: Policy = agent_class(collector)
+        agent: Agent = agent_class(env)
         agent.load_state_dict(agent_state)
 
-        trainer = Trainer(agent, **trainer_params, run_name=random_run_name())
+        trainer = Trainer(agent, **trainer_params)
         trainer._loaded = True
         return trainer
-
-    def plot_rewards(self):
-        sns.lineplot(self.rewards_)
-        plt.title("Rewards per episode")
-        plt.ylabel("Rewards")
-        plt.xlabel("Number of episodes")
-        plt.plot()

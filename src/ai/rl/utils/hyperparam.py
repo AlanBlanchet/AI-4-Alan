@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 
-def to_hyperparam(v: int | float | Hyperparam | dict | str):
+def parse_hyperparam(v: HYPERPARAM):
     if isinstance(v, Hyperparam):
         return v
     elif isinstance(v, (float, int)):
@@ -74,8 +74,11 @@ class Hyperparam:
     def __req__(self, other):
         return other == self.current_
 
-    def test(self):
+    def eval(self):
         self.train_ = False
 
     def train(self):
         self.train_ = True
+
+
+HYPERPARAM = int | float | Hyperparam | dict | str

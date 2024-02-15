@@ -10,7 +10,7 @@ class AIPaths:
     rl = ai / "nn/rl"
     rl_envs = rl / "env/vendor"
 
-    tensorboard = root_p / "runs"
+    runs_p = root_p / "runs"
 
 
 AIPaths.cache.mkdir(exist_ok=True, parents=True)
