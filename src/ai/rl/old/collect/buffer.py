@@ -5,6 +5,10 @@ from itertools import islice
 from typing import Iterator
 
 import torch
+import torch.multiprocessing as mp
+from torch.distributions import Categorical
+
+from ...env.state import StateDict
 
 
 class BaseBuffer(ABC):
@@ -100,7 +104,51 @@ class DequeueBuffer(BaseBuffer):
     def __init__(self, size: int = 10000):
         super().__init__()
         self.size = size
-        self.buffer: deque[tuple(torch.Tensor)] = self._create_deque()
+        self.buffer: deque[tuple[torch.Tensor]] = self._create_deque()
 
     def _create_deque(self):
         return deque([], maxlen=self.size)
+
+
+class SharedStateBuffer:
+    def __init__(self, trajectory_size: int):
+        self.traj_size = trajectory_size
+        # Store trajectories and priorities
+        self.buffer = self._create_deque(trajectory_size)
+
+    def _create_deque(self, size: int):
+        return mp.Queue()
+
+    def push(self, trajectory):
+        """Save a trajectory"""
+        self.buffer.put(trajectory)
+
+
+class StateBuffer:
+    def __init__(self, trajectory_size: int):
+        self.traj_size = trajectory_size
+        # Store trajectories and priorities
+        self.buffer = self._create_deque(trajectory_size)
+        self.priorities = self._create_deque(trajectory_size)
+
+    def reset(self):
+        # To match api code is really bad :(
+        ...
+
+    def _create_deque(self, size: int):
+        return deque([], maxlen=size)
+
+    def push(self, trajectory):
+        """Save a trajectory"""
+        # Set high priority for new trajectories
+        self.priorities.append(50)
+        self.buffer.append(trajectory)
+
+    def sample(self, states: int) -> tuple[torch.Tensor, list[StateDict]]:
+        """Sample a batch of trajectories"""
+        distrib = Categorical(torch.tensor(self.priorities))
+        idx = distrib.sample((states,))
+        return idx, [self.buffer[i] for i in idx]
+
+    def __len__(self):
+        return len(self.buffer)

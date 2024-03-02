@@ -7,14 +7,14 @@ import torch
 from gymnasium.spaces import Discrete
 from tensorboardX import SummaryWriter
 
-from ..utils.func import parse_tensor
-from ..utils.hyperparam import Hyperparam, to_hyperparam
-from .buffer import DequeueBuffer
+from ...env.buffer import DequeueBuffer, StateBuffer
+from ...env.state import StateDict
+from ...utils.func import parse_tensor
+from ...utils.hyperparam import Hyperparam, parse_hyperparam
 from .environment import Environment
 
 if TYPE_CHECKING:
     from ..policy import Policy
-
 TRANSITIONS = tuple[torch.Tensor, ...]
 COLLECTOR_MODES = Literal["reset", "keep"]
 COLLECTION_OF = Literal["steps", "episodes"]
@@ -30,20 +30,23 @@ class Collector(Environment):
         epsilon: int | Hyperparam = 0.9,
         buffer_size: int = 10000,
         video_freq=500,
+        custom_buffer: DequeueBuffer = None,
     ):
         self.buffer_size = buffer_size
         super().__init__(env_id)
         self.default_collect = collect
         self.default_of = of
-        self.current_state = None
+        self.current_obs = None
         self._n_episodes = 0
         self._episode_start = 0
         self._n_steps = 0
         self.logger: SummaryWriter = None
         self.mode = "reset"
-        self.epsilon = to_hyperparam(epsilon)
+        self.epsilon = parse_hyperparam(epsilon)
         self._train = True
-        self.buffer = DequeueBuffer(self.buffer_size)
+        self.buffer = (
+            DequeueBuffer(self.buffer_size) if custom_buffer is None else custom_buffer
+        )
         self.episode_buffer = []
         self.video_freq = video_freq
 
@@ -55,11 +58,11 @@ class Collector(Environment):
     def set_policy(self, policy: Policy):
         self._policy = policy
 
-    def fill(self, n: int):
+    def fill(self, n: int, extract=False):
         """
         Fills the buffer with n steps.
         """
-        return self.collect_steps(n)
+        return self.collect_steps(n, extract=extract)
 
     def sample(
         self,
@@ -67,24 +70,36 @@ class Collector(Environment):
         device: torch.device,
         stacks=1,
         rand_type: COLLECTOR_RANDOM_TYPE = "step",
-    ) -> TRANSITIONS:
+    ) -> StateDict:
         """
         Samples n steps from the buffer.
         """
-        data = None
+        data = StateDict(device=device)
         if rand_type == "step":
             # TODO make sure we don't sample from 2 diffent episodes when stacking
             stack_data = self.buffer.sample(n, stacks=stacks)
             # stack = [(s,s,s), (s,s,s), ...]
-            data = [list(sum(stack, ())) for stack in zip(*stack_data)]  # Flatten stack
+            data.add_defaults(
+                [list(sum(stack, ())) for stack in zip(*stack_data)]
+            )  # Flatten stack
         elif rand_type == "episode":
-            trajectories_data = [self._sample_episode_steps(n) for _ in range(stacks)]
-            data = [torch.cat(traj) for traj in zip(*trajectories_data)]
+            trajectories = []
+            masks = []
+            # Extract n stacks
+            for _ in range(n):
+                # Extract stacks steps from episode
+                _data, mask = self._sample_episode_steps(stacks)
+                trajectories.append(_data)
+                masks.append(mask)
+            _data = [torch.cat(traj) for traj in zip(*trajectories)]
+            masks = torch.stack(masks)
+            data.add_defaults(_data)
+            data["mask"] = masks
         else:
             raise ValueError(f"Invalid random type: {rand_type}")
 
-        tensor_data = [parse_tensor(x, device=device) for x in data]
-        return tensor_data
+        data.to_tensors(device=device)
+        return data
 
     def _sample_episode_steps(self, n: int):
         # Use episode buffer to get max(n_steps) from an episode
@@ -95,22 +110,26 @@ class Collector(Environment):
         buffer_idx = episode_buffer.flip(0).cumsum(0)
         # step_diff = self._n_steps - buffer_idx[-1]
         if self._n_steps < self.buffer_size:
-            buffer_idx = torch.cat([buffer_idx, torch.tensor([self._n_steps])])
+            if self._n_steps not in buffer_idx:
+                buffer_idx = torch.cat([buffer_idx, torch.tensor([self._n_steps])])
+        else:
+            buffer_idx = buffer_idx[buffer_idx < self.buffer_size]
         # Select 2 neighbor points from buffer_idx
         r = random.randint(0, len(buffer_idx) - 2)
         start, end = buffer_idx[r], buffer_idx[r + 1]
         # Select random starting point in episode
         r = random.randint(0, max(0, end - start - n))
         start += r
-        data = self.buffer.slice(start, min(start + n, end))
-        data = [parse_tensor(x, "cuda") for x in data]
+        data = list(self.buffer.slice(start, min(start + n, end)))
+        data = [parse_tensor(x) for x in data]
         _data: list[torch.Tensor] = []
+        mask = torch.where(torch.arange(n) < data[0].shape[0], 1, 0)
         # Make sure it is of batch_size n
         for d in data:
             target = torch.zeros(n, *d.shape[1:])
-            target[n - d.shape[0] :] = d
+            target[: d.shape[0]] = d
             _data.append(target)
-        return _data
+        return _data, mask
 
     def collect(self, device: torch.device):
         """
@@ -128,7 +147,7 @@ class Collector(Environment):
         if self.mode == "reset":
             self.buffer.reset()
 
-        stored_episodes: list[TRANSITIONS] = []
+        stored_episodes: list[StateDict] = []
         for _ in range(n_episodes):
             done = False
             steps = 0
@@ -148,15 +167,18 @@ class Collector(Environment):
 
         return stored_episodes
 
-    def _extract(self, device: torch.device = None, num: int = None):
+    def _extract(self, device: torch.device = None, num: int = None, episode=False):
         device = device or torch.device("cpu")
-        data = self.buffer.extract(num)
-        tensor_data = [parse_tensor(x, device=device) for x in data]
-        if self.mode == "reset":
-            self.buffer.reset()
-        return tensor_data
+        if episode:
+            # Do not more than the current episode steps
+            episode_buffer = torch.tensor(self.episode_buffer)
+            num = min(self._n_steps - episode_buffer.sum(), num)
+        data = StateDict(self.buffer.extract(num), device=device)
+        # if self.mode == "reset":
+        #     self.buffer.reset()
+        return data
 
-    def collect_steps(self, n_steps: int, device: torch.device = None):
+    def collect_steps(self, n_steps: int, device: torch.device = None, extract=True):
         """
         Collects n steps from the environment using the given policy.
         """
@@ -166,16 +188,29 @@ class Collector(Environment):
         for _ in range(n_steps):
             self.collect_step()
 
-        return self._extract(device, n_steps)
+        if extract:
+            return self._extract(device, n_steps)
+
+    def collect_trajectory(self, size: int, device: torch.device = None):
+        """
+        Collects trajecoties from the environment.
+        """
+        traj = self.collect_steps(size)
+        # Trajectory possibly has multiple episodes
+        trajs = traj.episode_split()
+
+        return trajs
 
     def collect_step(self, store=True):
-        if self.current_state is None:
-            self.current_state = torch.from_numpy(self._env.reset()[0]).float()
+        if self.current_obs is None:
+            self.current_obs = torch.from_numpy(self._env.reset()[0]).float()
 
-        state = self.current_state
+        obs = self.current_obs
 
         # We sometimes need to prefill the buffer at random (ex: stacks)
-        requires_gready = self._policy.stacked and self._n_steps <= self._policy.stacks
+        requires_gready = (
+            self._policy.stack_type is not None and self._n_steps <= self._policy.stacks
+        )
 
         action = None
         epsilon = self.epsilon.step(self._n_steps)
@@ -190,12 +225,19 @@ class Collector(Environment):
 
         if action is None:
             # Sample from policy
-            if self._policy.stacked:
-                # Extract num previous states
-                s, *_ = self._extract(num=self._policy.stacks)
-                action = self._policy.batch_act(s).squeeze(dim=0).detach()
+            stack_type = self._policy.stack_type
+            if stack_type:
+                episode_constrained = stack_type == "mask"
+                # Extract num previous obs if allowed
+                if self._episode_start != 0:
+                    data = self._extract(
+                        num=self._policy.stacks, episode=episode_constrained
+                    )
+                    action = self._policy.batch_act(data["obs"]).squeeze(dim=0).detach()
+                else:
+                    action = self._policy.act(obs)
             else:
-                action = self._policy.act(state)
+                action = self._policy.act(obs)
 
         assert action is not None, "Action cannot be None"
 
@@ -208,10 +250,10 @@ class Collector(Environment):
             parsed_action = action.numpy()
 
         assert (
-            state.device == action.device
-        ), f"State ({state.device}) and action ({action.device}) must be on the same device"
+            obs.device == action.device
+        ), f"Obs ({obs.device}) and action ({action.device}) must be on the same device"
 
-        next_state, reward, terminated, truncated, _ = self._env.step(parsed_action)
+        next_obs, reward, terminated, truncated, _ = self._env.step(parsed_action)
 
         done = terminated or truncated
 
@@ -222,7 +264,7 @@ class Collector(Environment):
             self._n_episodes += 1
             self.episode_buffer.append(self._episode_start)
             self._episode_start = 0
-            self.current_state = None
+            self.current_obs = None
             self.logger.add_scalar(
                 "collector/episodes", self._n_episodes, self._n_steps
             )
@@ -230,9 +272,9 @@ class Collector(Environment):
                 "collector/buffer", len(self.buffer) + 1, self._n_steps
             )
         else:
-            self.current_state = torch.from_numpy(next_state).float()
+            self.current_obs = torch.from_numpy(next_obs).float()
 
-        data = (state, action, reward, next_state, done)
+        data = (obs, action, reward, next_obs, done)
         if store:
             self.buffer.push(*data)
 
@@ -249,7 +291,7 @@ class Collector(Environment):
 
     def set_render(self, render_mode: str):
         super().set_render(render_mode)
-        self.current_state = None
+        self.current_obs = None
         return self
 
     def set_logger(self, logger: SummaryWriter):
@@ -258,13 +300,14 @@ class Collector(Environment):
     def __getstate__(self) -> object:
         state = super().__getstate__()
         del state["logger"]
-        del state["_policy"]
+        if "_policy" in state:
+            del state["_policy"]
         return state
 
     def _log_video(self):
-        s, *_ = self._extract(num=64)
+        data = self._extract(num=64)
 
-        s = s.permute(0, -1, -3, -2).unsqueeze(dim=0)
+        s = data["obs"].permute(0, -1, -3, -2).unsqueeze(dim=0)
 
         self.logger.add_video(
             "collector/video",
@@ -272,3 +315,45 @@ class Collector(Environment):
             self._n_steps,
             fps=60,
         )
+
+
+class DistributedCollector(Collector):
+    def __init__(
+        self,
+        env_id: str,
+        epsilon: int | Hyperparam = 0.9,
+        children_buffer: int = 4000,
+        buffer_size: int = None,
+        video_freq=500,
+        # The number of collectors to work with
+        num_collectors=4,
+    ):
+        buffer_size = buffer_size or children_buffer * num_collectors
+        super().__init__(
+            env_id,
+            epsilon=epsilon,
+            buffer_size=buffer_size,
+            video_freq=video_freq,
+            # Use a state buffer to gather states from all collectors
+            custom_buffer=StateBuffer(100),
+        )
+        self.num_collectors = num_collectors
+
+        # self.children_buffers = [
+        #     DequeueBuffer(children_buffer) for _ in range(num_collectors)
+        # ]
+
+    def train(self):
+        # [c.train() for c in self.collectors]
+        # return super().train()
+        ...
+
+    def eval(self):
+        # [c.eval() for c in self.collectors]
+        # return super().eval()
+        ...
+
+    def reset(self):
+        # [c.reset() for c in self.collectors]
+        # return super().reset()
+        ...

@@ -12,7 +12,7 @@ from ..policy import Policy
 from ..utils.encode import IMAGE_TYPE, Encoder
 
 
-class DRQN(Policy):
+class DQN(Policy):
     def __init__(
         self,
         collector: Collector,
@@ -21,11 +21,10 @@ class DRQN(Policy):
         gamma: float = 0.95,
         tau: float = 5e-3,
         update_target: int = None,
+        stacks=4,
         image_type: IMAGE_TYPE = "rgb",
-        # Sequence length isn't the same as stacks from DQN !
-        sequence_length: int = 4,
     ):
-        super().__init__(collector)
+        super().__init__(collector, stack_type="mask")
 
         self.lr = self.register_state("lr", lr)
         self.gamma = self.register_state("gamma", gamma)
@@ -34,11 +33,11 @@ class DRQN(Policy):
         self.update_target = self.register_state(
             "update_target", update_target or batch_size
         )
-        self.sequence_length = self.register_state("sequence_length", sequence_length)
+        self.stacks = self.register_state("stacks", stacks)
         self.image_type = self.register_state("image_type", image_type)
 
         self.network = Encoder(
-            self.in_state, self.out_actions, last_layer="lstm", image_type=image_type
+            self.in_state, self.out_actions, stacks=stacks, image_type=image_type
         )
 
         self.target_network = deepcopy(self.network)
@@ -46,21 +45,17 @@ class DRQN(Policy):
         self._train_steps = self.register_state("_train_steps", 0)
         self._network_syncs = self.register_state("_network_syncs", 0)
 
-        # self.zero_state = torch.zeros(, batch_size, 512).to(self.device)
-
         # Adam optimizers
         self._optim = Adam(self.network.parameters(), lr=self.lr)
 
     def setup(self):
         self.collector.set_mode("keep")
-        self.collector.fill(1000)
+        self.collector.fill(400)
 
     def preprocess_state(self, state: torch.Tensor):
         if state.ndim < 3:
-            assert self.sequence_length == 1, "Stacks must be 1 if state is 1D"
+            assert self.stacks == 1, "Stacks must be 1 if state is 1D"
             return state
-        elif state.ndim == 3:
-            state = (state.permute(-1, -3, -2).float() / 255.0).unsqueeze(dim=0)
         else:
             state = state.permute(0, -1, -3, -2).float() / 255.0
 
@@ -68,27 +63,26 @@ class DRQN(Policy):
             state = TF.rgb_to_grayscale(state)
         if state.shape[0] == 1:
             return state
-        return rearrange(state, "(b s) c h w -> b s c h w", s=self.sequence_length)
+        return rearrange(state, "(b s) c h w -> b (s c) h w", s=self.stacks)
 
     def preprocess(self, batch: list[torch.Tensor]):
-        # (B*S, C, H, W)
+        # (B * S, C, H, W)
         states, actions, rewards, next_states, dones = batch
 
         # Correct channel layout and normalized
-        # (B, S, C, H, W)
+        # (B, S * C, H, W)
         states = self.preprocess_state(states)
         next_states = self.preprocess_state(next_states)
 
-        # Make (B, S, N)
-        actions = rearrange(actions, "(b s) n -> b s n", s=self.sequence_length)
-        pattern = "(b s) -> b s"
-        rewards = rearrange(rewards, pattern, s=self.sequence_length)
-        dones = rearrange(dones, pattern, s=self.sequence_length)
+        # All we care about is the current taken action/rewards/dones
+        s = self.stacks
 
-        # TODO Better way to create masks
-        masks = ~(actions == 0).all(dim=-1)
+        # (B, ...)
+        actions = actions[s - 1 :: s]
+        rewards = rewards[s - 1 :: s]
+        dones = dones[s - 1 :: s]
 
-        return states, actions, rewards, next_states, dones, masks
+        return states, actions, rewards, next_states, dones
 
     def act(self, state):
         # State should be stacked (B*S, C, H, W)
@@ -96,21 +90,18 @@ class DRQN(Policy):
 
     def batch_act(self, states) -> torch.Tensor:
         states = self.preprocess_state(states)
-        x = self.network(states.to(self.device))
-        return x.softmax(dim=-1)
+        return self.network(states.to(self.device)).softmax(dim=-1)
 
     def step(self):
-        # Sample batch_size steps inside an episode
-        # We can't be sure to get a full batch_size of steps !
-        return self.collector.sample(
-            self.batch_size,
-            self.device,
-            stacks=self.sequence_length,
-            rand_type="episode",
-        )
+        if self.training:
+            return self.collector.sample(
+                self.batch_size, self.device, stacks=self.stacks
+            )
+        else:
+            return self.collector.sample(1, self.device, stacks=self.stacks)
 
     def forward(self, batch) -> Tensor:
-        states, actions, rewards, next_states, dones, masks = self.preprocess(batch)
+        states, actions, rewards, next_states, dones = self.preprocess(batch)
 
         # Get chosen actions at states
         chosen_actions = actions.argmax(dim=-1)

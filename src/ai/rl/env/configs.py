@@ -15,9 +15,22 @@ def to_tensor_fn():
     return to_tensor
 
 
+def crop(x_min, y_min, x_max, y_max):
+    def crop_fn(x):
+        return TF.crop(x, y_min, x_min, y_max - y_min, x_max - x_min)
+
+    return crop_fn
+
+
 ENV_CONFIGS = {
-    "ALE/Breakout": {
-        "preprocess": Compose([to_tensor_fn(), Grayscale(), CenterCrop((140, 180))]),
-        "out_shape": (1, 140, 180),
+    "Breakout": {
+        "preprocess": Compose([to_tensor_fn(), Grayscale(), CenterCrop((176, 146))]),
+        "out_shape": (1, 176, 146),
+        "max_same_eval": 200,
+    },
+    "Pong": {
+        "preprocess": Compose([to_tensor_fn(), Grayscale(), crop(4, 34, 156, 194)]),
+        "out_shape": (1, 160, 152),
+        "max_same_eval": 200,
     },
 }

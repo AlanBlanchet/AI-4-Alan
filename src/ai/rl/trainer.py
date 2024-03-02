@@ -3,6 +3,7 @@ from pathlib import Path
 from time import time
 
 import cv2
+import numpy as np
 import torch
 from tensorboardX import SummaryWriter
 from tqdm.auto import tqdm
@@ -11,6 +12,7 @@ from ai.utils.paths import AIPaths
 
 from .agent.agent import Agent
 from .env.environment import Environment
+from .metrics.action import ActionMetric
 from .utils.func import random_run_name
 
 
@@ -20,10 +22,11 @@ class Trainer:
         agent: Agent,
         run_name: str = random_run_name(),
         device: torch.device | int | str = None,
+        eval_steps=1000,
         **kwargs,
     ):
         self.agent = agent
-        self.eval_env = self.agent._env.clone()
+        self.eval_env = self.agent._env.clone(100, False)
 
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -38,14 +41,24 @@ class Trainer:
 
         self.logger = SummaryWriter(self.run_p)
 
-        self.eval_steps = 10
+        self.eval_steps = eval_steps
+        self._train_steps = 0
         self.evals_ = 0
         self._loaded = False
+
+        env = self.agent._env
+        self.action_metric = ActionMetric(env.out_action, env.action_names)
 
         for k, v in kwargs.items():
             setattr(self, k, v)
 
         torch.autograd.set_detect_anomaly(True)
+
+        # Prepare the agent
+        self._prepare()
+
+    def _prepare(self):
+        [_ for _ in tqdm(self.agent.prepare(), desc="Preparing agent")]
 
     def start(self, steps=1000):
         self.agent.train()
@@ -55,15 +68,25 @@ class Trainer:
 
         pbar = tqdm(range(int(steps)))
 
-        for agent_step in pbar:
+        for _ in pbar:
+            step = self._train_steps
             delta_time = time() - start_time
 
             metrics = self.agent.learn()
 
             for k, v in metrics.items():
-                self.logger.add_scalar(k, v, agent_step)
+                self.logger.add_scalar(f"train/{k}", v, step)
+            self.logger.add_scalar("train/epsilon", float(self.agent.epsilon), step)
+            optim = self.agent._optim
+            if optim is not None:
+                self.logger.add_scalar("train/lr", optim.param_groups[0]["lr"], step)
 
-            if agent_step > 0 and agent_step % self.eval_steps == 0:
+            if step > 0 and step % self.eval_steps == 0:
+                # Sample a train trajectory for plotting
+                traj = next(self.agent.trajectories(1))
+                obs = traj["obs"].cpu().repeat(1, 3, 1, 1).unsqueeze(0)
+                self.logger.add_video("train/trajectory", obs, step, fps=30)
+
                 self.eval()
                 self.agent.train()
 
@@ -73,18 +96,21 @@ class Trainer:
                 )
                 start_time = time()
 
+            self._train_steps += 1
+            self.agent.step(step)
+
     def eval(self):
         # Current train env
         train_env = self.agent._env
 
         # Move the agent into the evaluation zone
         self.agent.eval(self.eval_env)
+        self.eval_env.memory.clear()
 
         pbar = tqdm(leave=False)
 
         done = False
         i = 0
-        dones = 0
         writer = cv2.VideoWriter(
             str(self.vid_p / f"eval_{self.evals_}.avi"),
             cv2.VideoWriter_fourcc(*"MJPG"),
@@ -92,14 +118,35 @@ class Trainer:
             (160, 210),
         )
         self.agent._env.reset()
+        rewards = 0
+        self.action_metric.reset()
+        current_obs = None
+        max_same_eval = self.agent._env.config.get("max_same_eval", -1)
+        same_obs = 0
         while not done:
-            obs, *_, done = self.agent.interact()
+            obs, action, reward, _, done, *_ = self.agent.interact()
+
+            if current_obs is not None and np.array_equal(current_obs, obs):
+                same_obs += 1
+            else:
+                current_obs = obs
+                same_obs = 0
+
+            if max_same_eval > 0 and same_obs > max_same_eval:
+                print("Stuck in eval, breaking...")
+                break
+
+            self.action_metric.update(action.argmax().item())
+            rewards += reward
             pbar.update()
-            if done:
-                dones += 1
             i += 1
             writer.write(obs)
             pbar.set_description_str(f"Eval n°{self.evals_} - {i} ")
+
+        self.logger.add_scalar("eval/reward", np.mean(rewards), self.evals_)
+
+        for k, v in self.action_metric.compute().items():
+            self.logger.add_scalar(f"action/{k}", v, self.evals_)
 
         self.evals_ += 1
 
@@ -135,6 +182,7 @@ class Trainer:
             "eval_steps": self.eval_steps,
             "evals_": self.evals_,
             "run_name": self.run_name,
+            "_train_steps": self._train_steps,
         }
 
         # Model

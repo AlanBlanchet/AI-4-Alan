@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 import torch
 
 from .keys import DEFAULT_ENV_KEYS, DEFAULT_KEYS_TYPE
@@ -9,19 +11,16 @@ class StateDict(dict[DEFAULT_KEYS_TYPE, torch.Tensor | list]):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-    def get_defaults(self, stacks: int = 0):
-        items = [self.__getitem__(key) for key in DEFAULT_ENV_KEYS]
+    def get_defaults(self, *extra_keys: list[str]):
+        return [self.__getitem__(key) for key in [*DEFAULT_ENV_KEYS, *extra_keys]]
 
-        if stacks != 0:
-            for item, key in zip(items, DEFAULT_ENV_KEYS):
-                item = torch.stack([item.roll(idx) for idx in range(stacks)])
-                # Hide previous states
-                for stack in range(stacks):
-                    item[:stack] = 0
-
-                items[key] = item
-
-        return items
+    def __getitem__(
+        self,
+        __key: Literal["obs", "action", "reward", "next_obs", "done", "idx"] | list,
+    ) -> torch.Tensor | list[torch.Tensor]:
+        if isinstance(__key, list):
+            return (super(StateDict, self).__getitem__(k) for k in __key)
+        return super().__getitem__(__key)
 
     def to(self, device: str):
         for k in self.keys():
@@ -97,19 +96,9 @@ class StateDict(dict[DEFAULT_KEYS_TYPE, torch.Tensor | list]):
     #         batched_state[key] = torch.cat([state[key] for state in states])
     #     return batched_state
 
-    # def _to_tensors(self):
-    #     for k in self.keys():
-    #         if not torch.is_tensor(self[k]):
-    #             self[k] = parse_tensor(self[k], device=self.device)
-    #         else:
-    #             self[k] = self[k].to(self.device)
-    #     return self
-
-    # def set_device(self, device: str):
-    #     self.device = device
-    #     self._to_tensors()
-    #     return self
-
     def __repr__(self) -> str:
-        vals = ",".join([f"{k}={self[k].shape}" for k in self.keys()])
-        return f"StateDict({vals})"
+        max_str_len = max([len(k) for k in self.keys()]) + 1
+        vals = ",\n  ".join(
+            [f"{k.ljust(max_str_len, ' ')} = {self[k].shape}" for k in self.keys()]
+        )
+        return f"StateDict(\n  {vals}\n)"
