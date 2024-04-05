@@ -1,6 +1,7 @@
 # ML
 /runs
 lightning_logs
+neo.yml
 
 ### Python ###
 # Byte-compiled / optimized / DLL files
