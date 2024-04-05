@@ -5,6 +5,7 @@ import torch.nn as nn
 from einops import rearrange
 
 from ..env.environment import Environment
+from ..utils.func import keep_kwargs_prefixed
 from ..utils.hyperparam import HYPERPARAM, parse_hyperparam
 
 T = TypeVar("T")
@@ -18,6 +19,7 @@ class Agent(nn.Module):
         epsilon: HYPERPARAM = 0,
         history=0,
         requires_merge=True,
+        **kwargs,
     ):
         super().__init__()
         self.states = []
@@ -28,7 +30,9 @@ class Agent(nn.Module):
         self.lifetime = 0
         self.history = history
         self.requires_merge = requires_merge
-        self.epsilon = parse_hyperparam(epsilon)
+        self.epsilon = parse_hyperparam(
+            epsilon, end=0.1, **keep_kwargs_prefixed(kwargs, "epsilon_")
+        )
 
         self.register_state(["lifetime", "history", "requires_merge"])
 
@@ -43,13 +47,15 @@ class Agent(nn.Module):
         # Always add a history dimension
         obs, *delayed_obs = self.last(self.history)[delayed]
         obs = self._env.preprocess(obs)
-        if self.history > 0 and self.requires_merge:
-            obs = rearrange(obs, "s c h w -> (s c) h w")
         action, *storables = self.act(obs, *delayed_obs)
         # Collect experience
         experience = self._env.step(action, *storables)
         self.lifetime += 1
         return experience
+
+    @property
+    def view(self):
+        return self._env.view
 
     def episode_interact(self, n: int):
         dones = 0
@@ -89,9 +95,9 @@ class Agent(nn.Module):
         samples["obs"] = self._env.preprocess(samples["obs"])
         samples["next_obs"] = self._env.preprocess(samples["next_obs"])
         if self.history > 0 and self.requires_merge:
-            samples["obs"] = rearrange(samples["obs"], "b s c h w -> b (s c) h w")
+            samples["obs"] = rearrange(samples["obs"], "b s c ... -> b (s c) ...")
             samples["next_obs"] = rearrange(
-                samples["next_obs"], "b s c h w -> b (s c) h w"
+                samples["next_obs"], "b s c ... -> b (s c) ..."
             )
         return samples.to(self.device)
 

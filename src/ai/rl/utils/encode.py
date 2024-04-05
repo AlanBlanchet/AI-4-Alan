@@ -17,16 +17,7 @@ class Encoder(nn.Module):
         layers = []
         in_shape = list(in_shape)
 
-        if len(in_shape) == 1:
-            layers.extend(
-                [
-                    nn.Linear(in_shape[0], 128),
-                    nn.ReLU(True),
-                    nn.Linear(128, 128),
-                    nn.ReLU(True),
-                ]
-            )
-        elif len(in_shape) == 3:
+        if len(in_shape) == 3:
             layers.extend(
                 [
                     nn.AdaptiveAvgPool2d((84, 84)),
@@ -41,11 +32,19 @@ class Encoder(nn.Module):
                     nn.Flatten(),
                 ]
             )
+            self.out = 3136
         else:
-            raise ValueError(f"Invalid shape {in_shape}")
+            layers.extend(
+                [
+                    nn.Linear(in_shape[0], 128),
+                    nn.ReLU(True),
+                    nn.Linear(128, 128),
+                    nn.ReLU(True),
+                ]
+            )
+            self.out = 128
 
         self.encoder = nn.Sequential(*layers)
-        self.out = 3136
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Encode x

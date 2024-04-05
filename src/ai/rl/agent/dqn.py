@@ -22,6 +22,8 @@ class DQNAgent(Agent):
         batch_size=32,
         history=4,
         prepare_episodes=4,
+        reward_shaping=True,
+        interactions_per_learn=1,
         # Double DQN
         target=0,
         tau=0.995,
@@ -31,15 +33,20 @@ class DQNAgent(Agent):
         duel=False,
         # PER
         per=False,
+        **kwargs,
     ):
         self.prepare_episodes = prepare_episodes
         # DRQN means history is in the form of an embedding in the last hidden_state
         self.hidden_dim = 16
         history = max(history, 1)
+        if len(env.preprocessed_shape) <= 1:
+            history = 1
 
         self._train_steps = 0
         self._network_syncs = 0
         self.batch_size = batch_size
+        self.reward_shaping = reward_shaping
+        self.interactions_per_learn = interactions_per_learn
         self.gamma = gamma
         self.update_target = target
         self.tau = tau
@@ -60,6 +67,7 @@ class DQNAgent(Agent):
             epsilon=epsilon,
             history=1 if recurrent else history,
             requires_merge=not recurrent,
+            **kwargs,
         )
 
         if target != 0:
@@ -99,7 +107,7 @@ class DQNAgent(Agent):
             yield data
 
     def learn(self):
-        self.interact()
+        [self.interact() for _ in range(self.interactions_per_learn)]
 
         state = self.sample(
             self.batch_size, self.history, priority="p" if self.per else None
@@ -111,6 +119,10 @@ class DQNAgent(Agent):
         if self.recurrent:
             # (B, ...)
             h0, c0, h1, c1 = state[["h0", "c0", "h1", "c1"]]
+            h0 = h0[..., 0, :].unsqueeze(dim=0).detach()
+            c0 = c0[..., 0, :].unsqueeze(dim=0).detach()
+            h1 = h1[..., 0, :].unsqueeze(dim=0).detach()
+            c1 = c1[..., 0, :].unsqueeze(dim=0).detach()
 
         # (B, T, ...) -> (B, ...)
         rewards = rewards[..., -1]
@@ -119,8 +131,9 @@ class DQNAgent(Agent):
         idx = idx[..., -1]
 
         # Reward shaping
-        rewards = torch.where(rewards > 0, 1, rewards)
-        rewards = torch.where(rewards < 0, -1, rewards)
+        if self.reward_shaping:
+            rewards = torch.where(rewards > 0, 1, rewards)
+            rewards = torch.where(rewards < 0, -1, rewards)
 
         # Get chosen actions at states
         chosen_actions = actions.argmax(dim=-1)

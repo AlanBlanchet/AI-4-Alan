@@ -21,21 +21,52 @@ def main(ctx, env: str, agent: str):
     from ...rl import Environment, Trainer
     from ...rl.agent import Agent
 
+    kwargs = parse_extras(ctx)
+
     def agent_from_name(name: str, env: Environment) -> Agent:
         if name == "dqn":
             from ...rl import DQNAgent
 
-            return DQNAgent(env)
+            return DQNAgent(env, **kwargs)
         else:
             raise ValueError(f"Unknown agent: {name}")
 
-    kwargs = dict()
-    for item in ctx.args:
-        kwargs.update([item.split("=")])
-
+    save_name = f"{env}-{agent}"
     env = Environment(env, **kwargs)
     agent = agent_from_name(agent, env)
 
     trainer = Trainer(agent, **kwargs)
 
     trainer.start(**kwargs)
+
+    saved_path = trainer.save(save_name)
+    print(f"Training complete and saved in {saved_path}")
+
+
+def parse_extras(ctx):
+    kwargs = dict()
+    skip_next = False
+    for i, item in enumerate(ctx.args):
+        if skip_next:
+            skip_next = False
+            continue
+        split = item.split("=")
+        k, v = None, None
+        if len(split) != 2:
+            k = item.removeprefix("--")
+            if not (i + 1 >= len(ctx.args) or ctx.args[i + 1].startswith("--")):
+                v = ctx.args[i + 1]
+                skip_next = True
+            else:
+                v = True
+        else:
+            k, v = split
+            k = k.removeprefix("--")
+        if isinstance(v, str):
+            try:
+                v = float(v)
+                v = int(v) if int(v) == v else v
+            except Exception as _:
+                ...
+        kwargs.update([(k, v)])
+    return kwargs

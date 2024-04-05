@@ -3,15 +3,17 @@ from __future__ import annotations
 import json
 
 
-def parse_hyperparam(v: HYPERPARAM):
+def parse_hyperparam(v: HYPERPARAM, **kwargs):
     if isinstance(v, Hyperparam):
+        for k, kv in kwargs.items():
+            setattr(v, k, kv)
         return v
     elif isinstance(v, (float, int)):
-        return Hyperparam(start=v)
+        return Hyperparam(start=v, **kwargs)
     elif isinstance(v, dict):
-        return Hyperparam(**v)
+        return Hyperparam(**v, **kwargs)
     elif isinstance(v, str):
-        return Hyperparam(**json.loads(v))
+        return Hyperparam(**json.loads(v), **kwargs)
     else:
         raise TypeError(f"Cannot convert {v} to Hyperparam")
 

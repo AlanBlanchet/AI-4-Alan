@@ -33,4 +33,8 @@ ENV_CONFIGS = {
         "out_shape": (1, 160, 152),
         "max_same_eval": 200,
     },
+    # default for ALE (rgb)
+    "ALE": {
+        "preprocess": Compose([to_tensor_fn()]),
+    },
 }

@@ -51,3 +51,8 @@ def parse_tensor(data, device: torch.device = "cpu", dtype=torch.float32):
         return torch.tensor(data, dtype=dtype, device=device)
 
     return data.to(dtype).to(device)
+
+
+def keep_kwargs_prefixed(kwargs: dict, prefix: str) -> dict:
+    x = {k.removeprefix(prefix): v for k, v in kwargs.items() if k.startswith(prefix)}
+    return x

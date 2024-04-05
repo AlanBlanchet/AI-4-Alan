@@ -5,14 +5,13 @@ from time import time
 from typing import Literal
 
 import torch
+from ai.utils.paths import AIPaths
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
-from ai.utils.paths import AIPaths
-
+from ..utils.func import random_run_name
 from .collect.collector import COLLECTION_OF, Collector, DistributedCollector
 from .policy import Policy
-from ..utils.func import random_run_name
 
 
 class Trainer:
@@ -158,7 +157,7 @@ class Trainer:
     def _resolve_path(cls, path: str | Path):
         if isinstance(path, str):
             if "/" not in path:
-                path = AIPaths.cache / path
+                path = AIPaths.cache_p / path
             else:
                 path = Path(path).resolve()
 
@@ -169,7 +168,7 @@ class Trainer:
 
         return path
 
-    def save(self, path: str | Path = AIPaths.cache):
+    def save(self, path: str | Path = AIPaths.cache_p):
         path = Trainer._resolve_path(path)
 
         name = type(self.agent).__name__

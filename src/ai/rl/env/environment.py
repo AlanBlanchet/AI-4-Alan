@@ -1,7 +1,7 @@
-import gymnasium
 import torch
 from gymnasium.spaces import Discrete
 
+from .adapter import AdaptedEnv
 from .buffer import SmartReplayBuffer
 from .utils import get_env_config, get_preprocess
 
@@ -13,7 +13,7 @@ class Environment:
         self.env_name = env_name
         self.original = preprocess_buffer
         self.preprocess_fn = get_preprocess(env_name)
-        self._env = gymnasium.make(self.env_name, render_mode="rgb_array")
+        self._env = AdaptedEnv(env_name)
         self.memory = SmartReplayBuffer(memory, self.effective_shape, self.out_action)
         self.reset()
 
@@ -52,11 +52,6 @@ class Environment:
             self.reset()
         return experience
 
-    def set_render(self, render_mode: str):
-        self.close()
-        self._env = gymnasium.make(self._env.spec.id, render_mode=render_mode)
-        return self
-
     @property
     def render_mode(self):
         return self._env.render_mode
@@ -71,9 +66,7 @@ class Environment:
     @property
     def preprocessed_shape(self):
         config = get_env_config(self.env_name)
-        if config is not None:
-            return config["out_shape"]
-        return self.observation_shape
+        return config.get("out_shape", self.observation_shape)
 
     @property
     def effective_shape(self):
@@ -112,8 +105,16 @@ class Environment:
         del state["_env"]
         return state
 
-    def clone(self, memory=1, preprocess=False):
-        env = Environment(self.env_name, memory, preprocess)
+    @property
+    def view(self):
+        return self._env.view
+
+    @property
+    def simulated(self):
+        return self._env.simulated
+
+    def clone(self, memory=1):
+        env = Environment(self.env_name, memory, False)
         delayed_key_maps = {**self.memory.delayed_key_map}
         delayed_key_maps.pop("next_obs")
         env.setup_delayed(delayed_key_maps, self.memory.delayed_shapes)

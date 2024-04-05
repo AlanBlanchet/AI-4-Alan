@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 from time import time
 
@@ -22,11 +23,11 @@ class Trainer:
         agent: Agent,
         run_name: str = random_run_name(),
         device: torch.device | int | str = None,
-        eval_steps=1000,
+        eval_steps=200,
         **kwargs,
     ):
         self.agent = agent
-        self.eval_env = self.agent._env.clone(100, False)
+        self.eval_env = self.agent._env.clone(100)
 
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -60,7 +61,7 @@ class Trainer:
     def _prepare(self):
         [_ for _ in tqdm(self.agent.prepare(), desc="Preparing agent")]
 
-    def start(self, steps=1000):
+    def start(self, steps=1000, **_):
         self.agent.train()
         self.agent.to(self.device)
 
@@ -82,10 +83,11 @@ class Trainer:
                 self.logger.add_scalar("train/lr", optim.param_groups[0]["lr"], step)
 
             if step > 0 and step % self.eval_steps == 0:
-                # Sample a train trajectory for plotting
-                traj = next(self.agent.trajectories(1))
-                obs = traj["obs"].cpu().repeat(1, 3, 1, 1).unsqueeze(0)
-                self.logger.add_video("train/trajectory", obs, step, fps=30)
+                if not self.agent._env.simulated:
+                    # Sample a train trajectory for plotting
+                    traj = next(self.agent.trajectories(1))
+                    obs = traj["obs"].cpu().repeat(1, 3, 1, 1).unsqueeze(0)
+                    self.logger.add_video("train/trajectory", obs, step, fps=30)
 
                 self.eval()
                 self.agent.train()
@@ -111,25 +113,28 @@ class Trainer:
 
         done = False
         i = 0
-        writer = cv2.VideoWriter(
-            str(self.vid_p / f"eval_{self.evals_}.avi"),
-            cv2.VideoWriter_fourcc(*"MJPG"),
-            30,
-            (160, 210),
-        )
         self.agent._env.reset()
+        obs = self.agent.view
+        video_p = self.vid_p / f"eval_{self.evals_}.avi"
+        writer = cv2.VideoWriter(
+            str(video_p),
+            cv2.VideoWriter_fourcc(*"MPEG"),
+            30,
+            obs.shape[:-1][::-1],
+        )
+        writer.write(obs)
         rewards = 0
         self.action_metric.reset()
-        current_obs = None
         max_same_eval = self.agent._env.config.get("max_same_eval", -1)
         same_obs = 0
         while not done:
-            obs, action, reward, _, done, *_ = self.agent.interact()
+            _, action, reward, _, done, *_ = self.agent.interact()
+            next_obs = self.agent.view
 
-            if current_obs is not None and np.array_equal(current_obs, obs):
+            if obs is not None and np.array_equal(obs, next_obs):
                 same_obs += 1
             else:
-                current_obs = obs
+                obs = next_obs
                 same_obs = 0
 
             if max_same_eval > 0 and same_obs > max_same_eval:
@@ -148,6 +153,12 @@ class Trainer:
         for k, v in self.action_metric.compute().items():
             self.logger.add_scalar(f"action/{k}", v, self.evals_)
 
+        # Can't directly use the h264 codec for vscode
+        writer.release()
+        os.system(
+            f"ffmpeg -hide_banner -i {str(video_p)} -c:v libx264 {video_p.with_suffix('.mp4')} 2>/dev/null"
+        )
+        os.remove(video_p)
         self.evals_ += 1
 
         # Put the agent back into its training environment
@@ -157,18 +168,18 @@ class Trainer:
     def _resolve_path(cls, path: str | Path):
         if isinstance(path, str):
             if "/" not in path:
-                path = AIPaths.cache / path
+                path = AIPaths.cache_p / path
             else:
                 path = Path(path).resolve()
 
         if path.is_file():
             path = path.with_suffix("")
 
-        path.mkdir(exist_ok=True)
+        path.mkdir(exist_ok=True, parents=True)
 
         return path
 
-    def save(self, path: str | Path = AIPaths.cache):
+    def save(self, path: str | Path = AIPaths.cache_p):
         path = Trainer._resolve_path(path)
 
         name = type(self.agent).__name__
@@ -191,6 +202,7 @@ class Trainer:
         # Config
         with open(path / "params.json", "w+") as f:
             f.write(json.dumps(params))
+        return path
 
     @classmethod
     def load(cls, path: str | Path):

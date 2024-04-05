@@ -3,6 +3,7 @@ from typing import Literal
 import numpy as np
 import torch
 import torch.nn as nn
+from einops import rearrange
 
 from ..utils.encode import Encoder
 
@@ -43,26 +44,16 @@ class DQNPolicy(nn.Module):
         self.act = nn.ReLU()
 
     def forward(self, x, h: torch.Tensor = None, c: torch.Tensor = None):
+        if self.history > 0 and not self.is_lstm and x.ndim == 5:
+            x = rearrange(x, "b s c ... -> b (s c) ...")
+
         x = self.encoder(x)
         x = self.act(x)
 
         # Optionally use an LSTM
         if self.is_lstm:
-            h = h[..., 0, :].unsqueeze(dim=0).detach()
-            c = c[..., 0, :].unsqueeze(dim=0).detach()
-
-            # h = rearrange(h, "b h n -> h b n")
-            # c = rearrange(c, "b h n -> h b n")
-            # print(x.shape, h.shape, c.shape)
             x, (h, c) = self.lstm(x, (h, c))
             x = x.squeeze(dim=1)
-            # x = x.squeeze(dim=0)
-            # h = h.squeeze(dim=0)
-            # c = c.squeeze(dim=0)
-            # print("h", h.shape)
-            # h = rearrange(h, "h b n -> b h n")
-            # c = rearrange(c, "h b n -> b h n")
-            # print("out", x.shape, h.shape, c.shape)
             x = self.act(x)
 
         if self.duel:
