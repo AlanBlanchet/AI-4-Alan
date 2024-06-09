@@ -11,10 +11,10 @@ from tqdm.auto import tqdm
 
 from ai.utils.paths import AIPaths
 
+from ..utils.func import random_run_name
 from .agent.agent import Agent
 from .env.environment import Environment
 from .metrics.action import ActionMetric
-from .utils.func import random_run_name
 
 
 class Trainer:

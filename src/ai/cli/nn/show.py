@@ -1,25 +1,52 @@
+from importlib import import_module
 from inspect import _empty, signature
 
-from click import Choice, argument, command
+from click import Choice, argument, command, option
 
-from ...utils.paths import AIPaths
+from ...registry.registers import MODEL
 
 
 @command("show", help="Show a neural network model")
-@argument("model", type=Choice(list(AIPaths.get_archs())))
-def main(model):
+@argument("model", type=str)
+@option(
+    "--source",
+    "-s",
+    type=Choice(["timm", "hf", "torch"]),
+    default=None,
+    help="The source of the model",
+)
+def main(model, source: str = None):
     """
     MODEL : The name of the model to show
     """
-    print(get_arch(model))
+    if source == "timm":
+        from timm.models import create_model
+
+        print(create_model(model, pretrained=False))
+    elif source == "hf":
+        from transformers import AutoModel
+
+        print(AutoModel.from_pretrained(model))
+    elif source == "torch":
+        from torchvision.models import __dict__
+        from torchvision.models.detection import __dict__ as detection_dict
+
+        module = None
+        if model in __dict__:
+            module = __dict__[model]
+        else:
+            module = detection_dict[model]
+
+        print(module())
+    else:
+        print(get_arch(model))
 
 
-@AIPaths.fn_cache
 def get_arch(arch_name: str):
-    from ...utils.arch import get_arch_module
+    arch = MODEL[arch_name]["module"]
 
     # Get the Module from the name
-    arch_cls = get_arch_module(arch_name)
+    arch_cls = getattr(import_module(arch), arch_name)
 
     # Get the __init__ function for instantiation
     arch_init_fn = getattr(arch_cls, "__init__")

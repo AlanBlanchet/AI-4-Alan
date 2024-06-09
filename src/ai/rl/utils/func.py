@@ -4,7 +4,6 @@ from typing import Callable, Generator
 
 import numpy as np
 import torch
-from random_word import RandomWords
 
 
 def get_epsilon_exponential_decay_fn(
@@ -28,11 +27,6 @@ def batch_it(
 ) -> Generator[tuple[torch.Tensor, ...], None, None]:
     for i in range(0, len(elements[0]), size):
         yield tuple(e[i : i + size] for e in elements)
-
-
-def random_run_name(num_words=3):
-    generator = RandomWords()
-    return "-".join([generator.get_random_word().lower() for _ in range(num_words)])
 
 
 def parse_tensor(data, device: torch.device = "cpu", dtype=torch.float32):

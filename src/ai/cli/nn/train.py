@@ -1,10 +1,10 @@
 from click import Choice, argument, command
 
-from ...utils.paths import AIPaths
+from ...registry.registers import MODEL
 
 
 @command("show", help="Train a neural network model")
-@argument("model", type=Choice(list(AIPaths.get_archs())))
+@argument("model", type=Choice(MODEL.names))
 @argument("dataset", type=str)
 def main(model, dataset):
     """

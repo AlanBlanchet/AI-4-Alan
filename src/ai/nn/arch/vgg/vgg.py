@@ -1,47 +1,47 @@
+from collections import OrderedDict
+
 import torch.nn as nn
 
-from .block import ConvBlock
+from ....registry.registers import MODEL
+from ...modules import ConvBlock
+from .configs import configs
 
 
+@MODEL.register
 class VGG(nn.Module):
-    def __init__(self, config, in_channels=3, size=224):
+    def __init__(self, config=configs["C"], in_channels=3):
         super().__init__()
 
         self.features = self._generate(config, in_channels)
-
-        self.fc1 = nn.Linear(512 * (size // (2**5)) ** 2, 4096)
-        self.fc2 = nn.Linear(4096, 4096)
 
     def _generate(self, arch: list, in_channels: int):
         layers = []
         arch[0][1] = in_channels
 
+        conv = 0
+        sub_conv = 0
+        mp = 0
+
         for item in arch:
             if isinstance(item, str):
                 if item == "M":
-                    layers.append(nn.MaxPool2d(2))
+                    layers.append((f"max_pool_{mp+1}", nn.MaxPool2d(2, ceil_mode=True)))
+                    conv += 1
+                    sub_conv = 0
+                    mp += 1
                 elif item == "L":
-                    layers.append(nn.LocalResponseNorm(2))
+                    layers.append(("local_response", nn.LocalResponseNorm(2)))
             elif isinstance(item, list):
                 t, *ps = item
                 if t == "C":
-                    layers.append(ConvBlock(*ps))
+                    # Padding = 0 for K=1
+                    padding = 0 if len(ps) == 3 and ps[-1] == 1 else 1
+                    layers.append(
+                        (f"conv{conv+1}_{sub_conv+1}", ConvBlock(*ps, padding=padding))
+                    )
+                    sub_conv += 1
 
-        return nn.Sequential(*layers)
+        return nn.Sequential(OrderedDict(layers))
 
     def forward(self, x):
-        x = self.pool(self.conv1(x))  # WH = 112
-
-        x = self.pool(self.conv2(x))  # WH = 56
-
-        x = self.pool(self.conv3_2(self.conv3_1(x)))  # WH = 28
-
-        x = self.pool(self.conv4_2(self.conv4_1(x)))  # WH = 14
-
-        x = self.pool(self.conv5_2(self.conv5_2(x)))  # WH = 7
-
-        x = self.features(x)
-
-        x = x.flatten(start_dim=1)
-
-        return self.fc2(self.fc1(x))
+        return self.features(x)

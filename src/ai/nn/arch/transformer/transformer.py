@@ -1,9 +1,11 @@
 import torch.nn as nn
 
+from ....registry.registers import MODEL
 from .decoder import Decoder
 from .encoder import Encoder
 
 
+@MODEL.register
 class Transformer(nn.Module):
     def __init__(
         self,

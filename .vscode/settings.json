@@ -15,10 +15,10 @@
     "editor.defaultFormatter": "charliermarsh.ruff",
     "editor.codeActionsOnSave": {
       "source.fixAll": "explicit",
-      "source.organizeImports": "explicit",
-    },
+      "source.organizeImports": "explicit"
+    }
   },
-  "[javascript][json][typescript]": {
+  "[javascript][json][typescript][javascriptreact][typescriptreact]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
   "[toml]": {
@@ -29,5 +29,8 @@
     "editor.codeActionsOnSave": {
       "source.fixAll.markdownlint": "explicit"
     }
-  }
+  },
+  "python.testing.pytestArgs": ["src"],
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestEnabled": true
 }
