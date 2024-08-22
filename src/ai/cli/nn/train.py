@@ -13,4 +13,4 @@ def main(model, dataset):
     from ...train.trainer import AITrainer
 
     trainer = AITrainer(model, dataset)
-    trainer.fit()
+    trainer.run()

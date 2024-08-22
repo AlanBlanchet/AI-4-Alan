@@ -1,18 +1,77 @@
+from functools import cached_property
+from pprint import pformat
+from typing import ClassVar
+
 from lightning import Trainer
+from pydantic import computed_field
 
-from ..dataset.hf_dataset import HuggingFaceDataset
+from ..configs.base import BaseConfig
+from ..registry.registers import SOURCE
+
+# from ..dataset.base_dataset import BaseDataset
+from ..task.task import Task
 from .datamodule import AIDataModule
-from .model import AIModule
 
 
-class AITrainer:
-    def __init__(self, model_name: str, dataset_name: str):
-        self.dataset = HuggingFaceDataset(name=dataset_name)
-        self.datamodule = AIDataModule(self.dataset)
+@SOURCE.register
+class AITrainer(BaseConfig):
+    _: ClassVar[str] = "trainer"
 
-        self.model = AIModule(model_name, dataset=self.dataset)
+    log_name: ClassVar[str] = "trainer"
 
-        self.trainer = Trainer(accelerator="gpu")
+    task: Task
+    # model: nn.Module
+    params: dict
 
-    def fit(self):
-        self.trainer.fit(self.model, datamodule=self.datamodule)
+    @property
+    def dataset(self):
+        # Helper
+        return self.task.dataset
+
+    @computed_field
+    @cached_property
+    def trainer(self) -> Trainer:
+        lightning_params = self.params.get("lightning", {})
+
+        logger = self.task.logger
+        if logger:
+            lightning_params["logger"] = [logger]
+
+        return Trainer(
+            **lightning_params,
+            default_root_dir=self.task.run_p,
+        )
+
+    # @computed_field
+    # @cached_property
+    # def module(self) -> AIModule:
+    # path = Path(__file__).parents[3] / "lightning_logs"
+    # recent_ckpts = sorted(path.rglob("*.ckpt"), key=lambda x: x.lstat().st_mtime)
+    # if len(recent_ckpts) > 0 and LOAD_CKPT:
+    #     self.log(f"Loaded model from {recent_ckpts[-1]}")
+    #     return AIModule.load_from_checkpoint(recent_ckpts[-1])
+    # else:
+    # module = AIModule(self.task)
+    # self.log("Compiling model")
+    # torch.compile(module)
+    # return module
+
+    @computed_field
+    @cached_property
+    def datamodule(self) -> AIDataModule:
+        return AIDataModule(
+            dataset=self.dataset, params=self.params.get("datamodule", {})
+        )
+
+    def run(self):
+        self.log(f"Dataset example sample :\n{pformat(self.dataset.example())}")
+        self.log(f"Dataset :\n{pformat(self.dataset)}")
+
+        if self.params.get("val_only", False):
+            self.log("Validation only")
+            self.trainer.validate(self.task.lightning_model, datamodule=self.datamodule)
+        else:
+            self.trainer.fit(self.task.lightning_model, datamodule=self.datamodule)
+
+    class Config:
+        arbitrary_types_allowed = True

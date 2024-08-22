@@ -1,18 +1,21 @@
 import torch.nn as nn
+from timm import create_model
 
 from ....registry.registers import MODEL
 from ...modules import ResidualBlock
+from ...modules.conv import ConvBlock
+from ..compat import ISSD
 from .configs import configs
 
 
 @MODEL.register
-class ResNet(nn.Module):
+class ResNet(nn.Module, ISSD):
     def __init__(self, in_channels=3, config: list = configs["18"]):
         super().__init__()
+        self.config = config
 
-        self.conv1 = nn.Conv2d(in_channels, 64, kernel_size=7, stride=2, padding=3)
-        self.bn1 = nn.BatchNorm2d(64)
-        self.relu = nn.ReLU()
+        self.conv1 = ConvBlock(in_channels, 64, kernel_size=7, stride=2, padding=3)
+
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
 
         self.conv2_x = self._make_layer(config[0])
@@ -60,8 +63,6 @@ class ResNet(nn.Module):
 
     def forward(self, x):
         x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
         x = self.maxpool(x)
 
         for conv_x in [self.conv2_x, self.conv3_x, self.conv4_x, self.conv5_x]:
@@ -72,6 +73,20 @@ class ResNet(nn.Module):
         x = x.view(x.size(0), -1)
 
         return x
+
+    def ssd_compat(self):
+        dims = []
+        for layer_config in self.config:
+            dims.append(layer_config[0][-1][0])
+        return dict(
+            features=nn.Sequential(self.conv1, self.maxpool, *self.conv2_x),
+            channels=dims,
+            extras=[self.conv3_x, self.conv4_x, self.conv5_x],
+        )
+
+    def ssd_timm_compat(self):
+        model = create_model("resnet50", pretrained=True)
+        return dict(features=model.conv1)
 
 
 @MODEL.register

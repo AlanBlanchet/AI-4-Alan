@@ -9,7 +9,8 @@ class ConvBlock(nn.Module):
         kernel_size=3,
         padding=0,
         stride=1,
-        bias=True,
+        bias=False,
+        dilation=1,
         activation=nn.ReLU,
         norm=nn.BatchNorm2d,
     ):
@@ -21,9 +22,10 @@ class ConvBlock(nn.Module):
             padding=padding,
             stride=stride,
             bias=bias,
+            dilation=dilation,
         )
-        self.norm = norm(out_channels) if norm is not None else nn.Identity()
         self.act = activation() if activation is not None else nn.Identity()
+        self.norm = norm(out_channels) if norm is not None else nn.Identity()
 
     def forward(self, x):
-        return self.act(self.norm(self.conv(x)))
+        return self.norm(self.act(self.conv(x)))

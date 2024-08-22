@@ -9,7 +9,7 @@ import torch
 from tensorboardX import SummaryWriter
 from tqdm.auto import tqdm
 
-from ai.utils.paths import AIPaths
+from ai.utils.env import AIEnv
 
 from ..utils.func import random_run_name
 from .agent.agent import Agent
@@ -36,7 +36,7 @@ class Trainer:
 
         self.run_name = run_name
 
-        self.run_p = AIPaths.runs_p / self.run_name
+        self.run_p = AIEnv.runs_p / self.run_name
         self.vid_p = self.run_p / "vids"
         self.vid_p.mkdir(parents=True, exist_ok=True)
 
@@ -168,7 +168,7 @@ class Trainer:
     def _resolve_path(cls, path: str | Path):
         if isinstance(path, str):
             if "/" not in path:
-                path = AIPaths.cache_p / path
+                path = AIEnv.cache_p / path
             else:
                 path = Path(path).resolve()
 
@@ -179,7 +179,7 @@ class Trainer:
 
         return path
 
-    def save(self, path: str | Path = AIPaths.cache_p):
+    def save(self, path: str | Path = AIEnv.cache_p):
         path = Trainer._resolve_path(path)
 
         name = type(self.agent).__name__

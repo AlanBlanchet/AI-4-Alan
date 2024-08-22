@@ -1,3 +1,3 @@
-from ai.utils.paths import AIPaths
+from ai.utils.env import AIEnv
 
-__all__ = ["AIPaths"]
+__all__ = ["AIEnv"]

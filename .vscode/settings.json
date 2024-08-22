@@ -11,6 +11,7 @@
   "notebook.codeActionsOnSave": {
     "source.organizeImports": true
   },
+  "jupyter.notebookFileRoot": "${workspaceFolder}",
   "[python]": {
     "editor.defaultFormatter": "charliermarsh.ruff",
     "editor.codeActionsOnSave": {
@@ -30,7 +31,7 @@
       "source.fixAll.markdownlint": "explicit"
     }
   },
-  "python.testing.pytestArgs": ["src"],
+  "python.testing.pytestArgs": ["."],
   "python.testing.unittestEnabled": false,
   "python.testing.pytestEnabled": true
 }

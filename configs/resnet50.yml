@@ -1,0 +1,32 @@
+task:
+  _: Classification
+  input: image
+  labels: label
+  type: multiclass
+  params:
+    img_size: 300
+  logger:
+    _: AILogger
+    neptune:
+      project: alanox/AI-4-Alan
+dataset:
+  _: HuggingFaceDataset
+  path: ILSVRC/imagenet-1k
+  split_train:
+    name: train
+    size: 0.0005
+  split_val:
+    name: validation
+    size: 0.20
+model:
+  _: TimmModel
+  name: resnet34
+  pretrained: true
+trainer:
+  _: AITrainer
+  lightning:
+    max_epochs: 500
+  datamodule:
+    num_workers: 4
+    batch_size: 16
+  val_only: true

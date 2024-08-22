@@ -1,21 +1,25 @@
 import inspect
 from copy import deepcopy
+from importlib import import_module
+from pathlib import Path
+from typing import ClassVar
 
 import rich
 import rich.table
 import yaml
+from pydantic import BaseModel
 from rich import console
 
-from ..utils.paths import AIPaths
+from ..utils.env import AIEnv
 
 
-class Registry:
-    def __init__(self, name: str):
-        self.cache_p = AIPaths.cache_p / "registry"
-        self.cache_p.mkdir(exist_ok=True, parents=True)
-        self.cache_file_p = self.cache_p / f"{name}.yaml"
-        self._name = name
-        self._registry = {}
+class Registry(BaseModel):
+    cache_p: ClassVar[Path] = AIEnv.cache_p / "registry"
+    name: str
+    root: str | list[str]
+    _registry = {}
+
+    def model_post_init(self, _):
         self._load()
 
     def _load(self):
@@ -23,8 +27,8 @@ class Registry:
             self._registry = yaml.safe_load(self.cache_file_p.read_text())
 
     @property
-    def name(self):
-        return self._name
+    def cache_file_p(self):
+        return Registry.cache_p / f"{self.name}.yaml"
 
     @property
     def names(self):
@@ -60,31 +64,41 @@ class Registry:
             item["children"] = dict(sorted(children.items(), key=lambda x: x[1]))
         self._registry = registry
 
-    def _register(self, module):
+    def _register(self, module, **kwargs: dict):
         module_name = self._unique_name(module)
-        self._registry[module_name] = {
-            "module": module.__module__,
-            "name": module.__name__,
-            "children": {},
-            "parents": set(),
-        }
+        self._registry[module_name] = dict(
+            module=module.__module__,
+            name=module.__name__,
+            children={},
+            parents=set(),
+            meta=dict(**kwargs),
+        )
         return module
 
+    def _scope(self):
+        # Get all root modules into scope
+        if isinstance(self.root, list):
+            for root in self.root:
+                import_module(root)
+        else:
+            import_module(self.root)
+
     def calculate_index(self):
+        self._scope()
+        # Resolve their index
         self._resolve_index()
         registry = deepcopy(self._registry)
         for item in registry.values():
-            # item["children"] = list(item["children"])
             item["parents"] = list(item["parents"])
         self.cache_file_p.write_text(yaml.dump(registry))
         return self
 
-    def register(self, module=None):
+    def register(self, module=None, **kwargs: dict):
         if module is not None:
             return self._register(module)
 
         def _register(module):
-            self._register(module)
+            self._register(module, **kwargs)
             return module
 
         return _register
@@ -105,11 +119,23 @@ class Registry:
         del self._registry[name]
 
     def __getitem__(self, name):
+        item = self._get_by_name(name)
+
+        if item is None:
+            raise KeyError(f"Module {name} not found in registry")
+
+        module = item["module"]
+
+        # Get the Module from the name
+        return getattr(import_module(module), name)
+
+    def get_info(self, name):
         return self._get_by_name(name)
 
     def _get_by_name(self, name):
+        name = name.lower()
         for item in self._registry.values():
-            if item["name"] == name:
+            if item["name"].lower() == name:
                 return item
         return None
 
@@ -121,17 +147,27 @@ class Registry:
 
     def __repr__(self):
         resolved = self._get_resolved()
+        headers = [f"{self.name.lower().capitalize()}"]
+
+        if any([len(item["children"]) > 0 for item in resolved.values()]):
+            headers.append("children")
+
         table = rich.table.Table(
-            f"{self._name}", "children", title=f"Registry {self.name}"
+            *headers,
+            title=f"Registry {self.name}",
         )
 
         for item in resolved.values():
-            table.add_row(
-                item["name"],
-                ", ".join(
-                    [self._registry[child]["name"] for child in item["children"]]
-                ),
-            )
+            row = [item["name"]]
+
+            if len(item["children"]) > 0:
+                row.append(
+                    ", ".join(
+                        [self._registry[child]["name"] for child in item["children"]]
+                    )
+                )
+
+            table.add_row(*row)
 
         cls = console.Console(record=True)
         with cls.capture() as capture:
@@ -140,3 +176,6 @@ class Registry:
 
     def __str__(self):
         return self.__repr__()
+
+
+Registry.cache_p.mkdir(exist_ok=True, parents=True)

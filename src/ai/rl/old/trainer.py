@@ -5,7 +5,7 @@ from time import time
 from typing import Literal
 
 import torch
-from ai.utils.paths import AIPaths
+from ai.utils.env import AIEnv
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
 
@@ -32,7 +32,7 @@ class Trainer:
         self.tqdm_reward_update_s = tqdm_reward_update_s
         self.train_mode_ = "rgb_array"
         self.run_name = run_name
-        self.logger = SummaryWriter(AIPaths.runs_p / self.run_name)
+        self.logger = SummaryWriter(AIEnv.runs_p / self.run_name)
         self.agent.set_logger(self.logger)
         self.collector.set_logger(self.logger)
         self.collector.set_policy(agent)
@@ -157,7 +157,7 @@ class Trainer:
     def _resolve_path(cls, path: str | Path):
         if isinstance(path, str):
             if "/" not in path:
-                path = AIPaths.cache_p / path
+                path = AIEnv.cache_p / path
             else:
                 path = Path(path).resolve()
 
@@ -168,7 +168,7 @@ class Trainer:
 
         return path
 
-    def save(self, path: str | Path = AIPaths.cache_p):
+    def save(self, path: str | Path = AIEnv.cache_p):
         path = Trainer._resolve_path(path)
 
         name = type(self.agent).__name__

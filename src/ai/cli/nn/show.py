@@ -1,4 +1,3 @@
-from importlib import import_module
 from inspect import _empty, signature
 
 from click import Choice, argument, command, option
@@ -43,10 +42,7 @@ def main(model, source: str = None):
 
 
 def get_arch(arch_name: str):
-    arch = MODEL[arch_name]["module"]
-
-    # Get the Module from the name
-    arch_cls = getattr(import_module(arch), arch_name)
+    arch_cls = MODEL[arch_name]
 
     # Get the __init__ function for instantiation
     arch_init_fn = getattr(arch_cls, "__init__")
