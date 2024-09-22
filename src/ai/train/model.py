@@ -8,21 +8,24 @@ import torch.optim as optim
 from lightning import LightningModule
 from torch.optim.lr_scheduler import ExponentialLR
 
-from ..registry.registers import SOURCE
-from .datamodule import BATCH_SIZE
+from ..registry import REGISTER
+from .defaults import BATCH_SIZE
 
 if TYPE_CHECKING:
     from ..task.task import Task
 
 
-@SOURCE.register
+@REGISTER
 class AIModule(LightningModule):
     def __init__(self, task: Task):
         super().__init__()
 
         self.task = task
         self.model = task.model
-        self.log_ = task.logger
+        self.log_ = None
+
+        if hasattr(task, "logger"):
+            self.log_ = task.logger.log
 
         # INFO: for lighting device handling
         for k, module in self.task.modules().items():
@@ -134,9 +137,15 @@ class AIModule(LightningModule):
                     if v.ndim == 1:
                         v = v.mean()
 
-                    self.log_(
-                        k, v, logger=True, prog_bar="training" in k and split == "train"
-                    )
+                    if self.log_ is not None:
+                        self.log_(
+                            k,
+                            v,
+                            logger=True,
+                            prog_bar="training" in k and split == "train",
+                        )
+                    else:
+                        self.log(k, v, prog_bar="training" in k and split == "train")
                 elif v.ndim == 2:
                     if v.shape[0] == v.shape[1]:
                         # Supposed to be a confusion matrix
@@ -150,7 +159,8 @@ class AIModule(LightningModule):
                         )
                         fig.layout.height = v.shape[-1] * 50
                         fig.layout.width = v.shape[-1] * 50
-                        self.log_(f"{k}", fig)
+                        if self.log_ is not None:
+                            self.log_(f"{k}", fig)
 
     def epoch_step(self, split: str):
         metrics = self.metrics.compute(split=split)
@@ -181,4 +191,4 @@ class AIModule(LightningModule):
 
     @property
     def metric_val_only(self):
-        return self.task.metric_val_only
+        return self.task.config.task.metric_val_only

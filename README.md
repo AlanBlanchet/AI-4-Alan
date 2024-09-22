@@ -7,14 +7,10 @@ I may not have time to document things but if you are willing to you can submit 
 
 ## Try out
 
-Make sure you have Poetry installed and please run
+Make sure you have `uv` installed and please run
 
 ```bash
-poetry install
-```
-
-```bash
-poetry shell # Put you inside the env
+uv install
 ```
 
 ```bash

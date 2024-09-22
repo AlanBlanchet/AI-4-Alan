@@ -3,8 +3,8 @@ from click import command
 
 @command("index", help="Create indexes for the registers")
 def main():
-    from ...registry.registers import REGISTERS
+    from ...registry import REGISTER
 
-    for registry in REGISTERS:
+    for registry in [REGISTER]:
         registry.calculate_index()
         print(registry)

@@ -2,21 +2,21 @@ from typing import ClassVar
 
 from timm import create_model
 
-from ..configs.base import BaseConfig
-from ..registry.registers import MODEL, SOURCE
+from ..configs.base import Base
+from ..registry import REGISTER
 
 
-@SOURCE.register
-class CustomModel(BaseConfig):
+@REGISTER
+class CustomModel(Base):
     _: ClassVar[str] = "custom"
 
     @classmethod
     def build(cls, name: str, **kwargs):
-        return dict(model_cls=MODEL[name], **kwargs, **MODEL.get_info(name))
+        return dict(model_cls=REGISTER[name], **kwargs, **REGISTER.get_info(name))
 
 
-@SOURCE.register
-class TimmModel(BaseConfig):
+@REGISTER
+class TimmModel(Base):
     _: ClassVar[str] = "timm"
 
     @classmethod

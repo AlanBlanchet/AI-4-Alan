@@ -10,12 +10,12 @@ from lightning.pytorch.utilities import rank_zero_only
 from neptune import Run
 from pydantic import computed_field
 
-from ..configs.base import BaseConfig
-from ..registry.registers import SOURCE
+from ..configs.base import Base
+from ..registry import REGISTER
 
 
-@SOURCE.register
-class AILogger(Logger, BaseConfig):
+@REGISTER
+class AILogger(Logger, Base):
     log_name: ClassVar[str] = "ai-logger"
 
     all_loggers: dict = {}

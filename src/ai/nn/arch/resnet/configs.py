@@ -1,3 +1,5 @@
+from ....configs.models import ClassificationConfig, PretrainedConfig
+
 configs = {
     "18": [
         [[[64, 3], [64, 3]], 2],
@@ -30,3 +32,9 @@ configs = {
         [[[512, 1], [512, 3], [2048, 1]], 3],
     ],
 }
+
+
+class ResNetConfig(PretrainedConfig, ClassificationConfig):
+    num_classes: int = 1000
+    in_channels: int = 3
+    config: list[list[list[list[int]] | int]] = None

@@ -1,8 +1,9 @@
 from inspect import _empty, signature
 
+import torch.nn as nn
 from click import Choice, argument, command, option
 
-from ...registry.registers import MODEL
+from ...registry import REGISTER
 
 
 @command("show", help="Show a neural network model")
@@ -42,7 +43,10 @@ def main(model, source: str = None):
 
 
 def get_arch(arch_name: str):
-    arch_cls = MODEL[arch_name]
+    arch_cls = REGISTER[arch_name]
+
+    if not issubclass(arch_cls, nn.Module):
+        raise ValueError(f"Model {arch_name} is not a subclass of nn.Module")
 
     # Get the __init__ function for instantiation
     arch_init_fn = getattr(arch_cls, "__init__")

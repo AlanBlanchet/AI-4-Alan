@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from ....registry.registers import MODEL
+from ....registry import REGISTER
 from ....task.detection.detection import decode
 from ....utils.arch import build_arch_module
 from ...modules.conv import ConvBlock
@@ -9,7 +9,7 @@ from ..compat import ISSD
 from ..vgg.models import VGG16
 
 
-@MODEL.register(requires=["backbone", "num_classes"])
+@REGISTER(requires=["backbone", "num_classes"])
 class SSD(nn.Module):
     def __init__(self, backbone: ISSD | str = None, num_classes=20):
         super().__init__()
@@ -91,13 +91,13 @@ class SSD(nn.Module):
         return dict(scores=conf, boxes=loc)
 
 
-@MODEL.register
+@REGISTER
 class SSD300(SSD):
     def __init__(self, backbone: ISSD | str = None, num_classes=20):
         super().__init__(backbone, num_classes)
 
 
-@MODEL.register
+@REGISTER
 class SSD512(SSD):
     def __init__(self, backbone: ISSD | str = None, num_classes=20):
         super().__init__(backbone, num_classes)

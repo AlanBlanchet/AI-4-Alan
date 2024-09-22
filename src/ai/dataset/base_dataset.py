@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from torch.utils.data import Dataset
 
-from ..configs.base import BaseConfig
+from ..configs.base import Base
 
 if TYPE_CHECKING:
     from ..task.classification.label_map import LabelMap
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 class BaseTorchDataset(Dataset): ...
 
 
-class BaseDataset(BaseConfig):
+class BaseDataset(Base):
     log_name: ClassVar[str] = "dataset"
 
     @property
@@ -38,7 +38,7 @@ class BaseDataset(BaseConfig):
     def compatible_tasks(self) -> dict[str, Any]: ...
 
     @abstractmethod
-    def prepare(self, input: str, outputs: dict[str, str], label_map: LabelMap): ...
+    def prepare(self, label_map: LabelMap): ...
 
     # TODO Refactor
     # def compatible_tasks_flat(self) -> list[tuple[str, list[Task]]]:
@@ -71,7 +71,7 @@ class BaseDataset(BaseConfig):
     #     self.log("\n", capture.get())
 
     def example(self):
-        return self.val()[0]
+        return next(self.val().__iter__())
 
 
 # class CompatibilityOutput(BaseModel):

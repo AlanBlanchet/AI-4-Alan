@@ -1,7 +1,5 @@
-from .registry import Registry
+# SOURCE = Registry(name="SOURCE", root=["ai.dataset", "ai.task", "ai.nn"])
 
-SOURCE = Registry(name="SOURCE", root=["ai.dataset", "ai.task", "ai.nn"])
+# MODEL = Registry(name="MODEL", root="ai.nn.arch")
 
-MODEL = Registry(name="MODEL", root="ai.nn.arch")
-
-REGISTERS = [MODEL, SOURCE]
+# REGISTERS = [MODEL, SOURCE]

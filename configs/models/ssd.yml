@@ -1,0 +1,39 @@
+task:
+  _: Detection
+  input: image
+  labels: objects.classes
+  boxes: objects.bboxes
+  type: multiclass
+  params:
+    img_size: 300
+    anchors:
+      feature_maps: [38, 19, 10, 5, 3, 1]
+      num_anchors: [4, 6, 6, 6, 4, 4]
+    metrics:
+      val_only: True
+  logger:
+    _: AILogger
+    neptune:
+      project: alanox/AI-4-Alan
+  model:
+    _: CustomModel
+    name: SSD
+    backbone:
+      _: TimmModel
+      name: resnet50
+dataset:
+  _: HuggingFaceDataset
+  path: fuliucansheng/pascal_voc
+  name: voc2007_main
+  split_train:
+    name: train
+  split_val:
+    name: validation
+trainer:
+  _: AITrainer
+  lightning:
+    max_epochs: 500
+    deterministic: False
+  datamodule:
+    num_workers: 8
+    batch_size: 4

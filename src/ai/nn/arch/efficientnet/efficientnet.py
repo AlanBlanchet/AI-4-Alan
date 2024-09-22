@@ -1,9 +1,9 @@
 import torch.nn as nn
 
-from ....registry.registers import MODEL
+from ....registry import REGISTER
 
 
-@MODEL.register
+@REGISTER
 class EfficientNet(nn.Module):
     def __init__(self, in_channels: int = 3):
         super().__init__()

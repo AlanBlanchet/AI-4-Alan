@@ -1,0 +1,33 @@
+task:
+  type: classification
+  input: image
+  labels: objects.category
+  boxes: objects.bbox
+  val_only: False
+  params:
+    img_size: 640
+  model:
+    type: DETR
+    backbone:
+      type: ResNet18
+      pretrained: True
+    hidden_dim: 256
+dataset:
+  source: hf
+  params:
+    path: keremberke/license-plate-object-detection
+    name: full
+  train:
+    name: train
+    size: 0.03
+  val:
+    name: validation
+    size: 0.3
+run:
+  action: val
+  lightning:
+    max_epochs: 4
+    deterministic: False
+  datamodule:
+    num_workers: 8
+    batch_size: 4

@@ -16,7 +16,7 @@ class ClassificationMetrics(torchmetrics.Metric):
             torchmetrics.Recall,
             torchmetrics.F1Score,
             torchmetrics.Specificity,
-            torchmetrics.AUROC,
+            # torchmetrics.AUROC,
         ]
 
         self.common = torchmetrics.MetricCollection(
@@ -48,7 +48,8 @@ class ClassificationMetrics(torchmetrics.Metric):
             compute_groups=False,
         )
 
-        self.probs = ClassProbabilities(num_classes)
+        # TODO fix probabilities
+        # self.probs = ClassProbabilities(num_classes)
 
     def update(self, x: torch.Tensor, y: torch.Tensor):
         x = x.reshape(-1, self.num_classes)
@@ -57,14 +58,14 @@ class ClassificationMetrics(torchmetrics.Metric):
         self.common.update(x, y)
         self.roc.update(x, y)
         self.cms.update(x, y)
-        self.probs.update(x, y)
+        # self.probs.update(x, y)
         self.other_losses.update(x.softmax(dim=-1), F.one_hot(y, self.num_classes))
 
     def reset(self):
         self.common.reset()
         self.roc.reset()
         self.cms.reset()
-        self.probs.reset()
+        # self.probs.reset()
         self.other_losses.reset()
 
     def compute(self):
@@ -72,7 +73,7 @@ class ClassificationMetrics(torchmetrics.Metric):
             common=self.common.compute(),
             roc=self.roc.compute(),
             cms=self.cms.compute(),
-            probs=self.probs.compute(),
+            # probs=self.probs.compute(),
             other_losses=self.other_losses.compute(),
         )
         self.reset()

@@ -76,12 +76,22 @@ class Registry(BaseModel):
         return module
 
     def _scope(self):
-        # Get all root modules into scope
-        if isinstance(self.root, list):
-            for root in self.root:
-                import_module(root)
-        else:
-            import_module(self.root)
+        python_files = AIEnv.ai_p.rglob("*.py")
+        for file in python_files:
+            if file.stem == "__init__":
+                continue
+
+            module = AIEnv.path2module(file)
+            try:
+                import_module(module)
+            except Exception as e:
+                raise ValueError(f"Error importing {module}") from e
+        # # Get all root modules into scope
+        # if isinstance(self.root, list):
+        #     for root in self.root:
+        #         import_module(root)
+        # else:
+        #     import_module(self.root)
 
     def calculate_index(self):
         self._scope()
@@ -102,6 +112,9 @@ class Registry(BaseModel):
             return module
 
         return _register
+
+    def __call__(self, module=None, **kwargs: dict):
+        return self.register(module, **kwargs)
 
     def get(self, name):
         return self._registry[name]
@@ -179,3 +192,5 @@ class Registry(BaseModel):
 
 
 Registry.cache_p.mkdir(exist_ok=True, parents=True)
+
+REGISTER = Registry(name="REGISTER", root="ai")

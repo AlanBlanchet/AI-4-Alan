@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from albumentations import BboxParams
 
-from ...registry.registers import SOURCE
+from ...registry import REGISTER
 from ..classification.task import Classification
 from ..metrics import GroupedMetric
 from .anchor import AnchorManager
@@ -13,7 +13,7 @@ from .losses import MultiBoxDetectionLoss
 from .metrics import DetectionMetrics
 
 
-@SOURCE.register
+@REGISTER
 class Detection(Classification):
     name: ClassVar[str] = "detection"
     alias: ClassVar[str] = "det"

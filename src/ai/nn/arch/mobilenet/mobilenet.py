@@ -2,7 +2,7 @@ from typing import Literal, get_args
 
 import torch.nn as nn
 
-from ....registry.registers import MODEL
+from ....registry import REGISTER
 
 MOBILE_NET_V1_VALID_RES_TYPE = Literal["224", "192", "160", "128", "96", "64"]
 MOBILE_NET_V1_VALID_RES: list[MOBILE_NET_V1_VALID_RES_TYPE] = list(
@@ -34,7 +34,7 @@ class DepthWiseSeparableConv2d(nn.Module):
         return x
 
 
-@MODEL.register
+@REGISTER
 class MobileNet(nn.Module):
     """
     https://arxiv.org/pdf/1704.04861
@@ -89,11 +89,11 @@ class MobileNet(nn.Module):
         return x
 
 
-@MODEL.register
+@REGISTER
 class MobileNetV1(MobileNet): ...
 
 
-@MODEL.register
+@REGISTER
 class MobileNetV2(nn.Module):
     # TODO
     def __init__(self):

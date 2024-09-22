@@ -24,6 +24,4 @@ def main(source: str = None):
 
         print(list_models())
     else:
-        from ...registry.registers import MODEL
-
         print(MODEL)

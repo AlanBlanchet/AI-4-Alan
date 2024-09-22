@@ -1,16 +1,9 @@
-import os
-
 from lightning import LightningDataModule
 from torch.utils.data import DataLoader
 
 from ..dataset.base_dataset import BaseDataset
 from ..dataset.collator.mask import masked_collator
 from ..utils.env import AIEnv
-
-DL_WORKERS = max(2, os.cpu_count() - 4)
-BATCH_SIZE = 16
-
-DL_WORKERS = 0
 
 
 class AIDataModule(LightningDataModule):

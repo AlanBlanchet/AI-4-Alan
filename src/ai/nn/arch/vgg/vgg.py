@@ -2,12 +2,12 @@ from collections import OrderedDict
 
 import torch.nn as nn
 
-from ....registry.registers import MODEL
+from ....registry import REGISTER
 from ...modules import ConvBlock
 from .configs import configs
 
 
-@MODEL.register
+@REGISTER
 class VGG(nn.Module):
     def __init__(self, config=configs["C"], in_channels=3):
         super().__init__()

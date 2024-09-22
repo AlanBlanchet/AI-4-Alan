@@ -9,7 +9,7 @@ def masked_collator(batch: list[dict]):
         ex = samples[0]
 
         if isinstance(ex, torch.Tensor):
-            lengths = [len(s) for s in samples]
+            lengths = [len(s) if s.ndim != 0 else 0 for s in samples]
 
             max_len = max(lengths)
             if min(lengths) == max_len:

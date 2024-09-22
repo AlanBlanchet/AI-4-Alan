@@ -1,0 +1,8 @@
+dataset:
+  _: HuggingFaceDataset
+  path: fuliucansheng/pascal_voc
+  name: voc2007_main
+  split_train:
+    name: train
+  split_val:
+    name: validation

@@ -17,7 +17,7 @@ from albumentations import (
 from albumentations.pytorch import ToTensorV2
 from pydantic import computed_field
 
-from ...registry.registers import SOURCE
+from ...configs.base import Base
 from ..metrics import GroupedMetric
 from ..task import TASK_TYPE, Task
 from .label_map import LabelMap
@@ -25,44 +25,65 @@ from .metrics import ClassificationMetrics
 from .model import ClassificationModel
 
 
-@SOURCE.register
 class Classification(Task):
     name: ClassVar[str] = "classification"
     alias: ClassVar[str] = "clf"
-    input: str
-    labels: str = "labels"
-    label_map_params: dict = {}
-    type: TASK_TYPE = None
+    # input: str
+    # labels: str = "labels"
+    # label_map_params: dict = {}
+    # type: TASK_TYPE = None
 
-    @property
+    # def setup_model(self, config):
+
+    # ex = self.dataset.example()
+
+    # out = model(ex["input"].unsqueeze(dim=0))[-1]
+
+    # self.log(
+    #     f"Calculated in_features from input{tuple(ex['input'].shape)} for classification head: {tuple(out.shape[1:])}"
+    # )
+
+    # in_features = torch.tensor(out.shape[1:]).sum().item()
+    # model = ClassificationModel(model, in_features, len(self.label_map))
+
+    # print(model)
+
+    # exit(0)
+
+    @cached_property
     def model(self):
         self.log("Setting up model")
-        model_cls = self.model_info["model_cls"]
-        model_ = model_cls(num_classes=len(self.label_map))
-        meta = self.model_info.get("meta", {})
-        requires = meta.get("requires", [])
+        num_classes = len(self.label_map)
 
-        if "num_classes" in requires or not self.model_info.get("adapt", True):
-            # The model already has a classification head
-            return model_
+        # Treat as if model doesn't have a classification head and isn't initialized
+        model: nn.Module = Base.from_config(
+            dict(**self.config.task.model.model_dump(), num_classes=num_classes)
+        )
+
+        return model
+
+        model_cls = self.model_info["model_cls"]
+        model_config = model_cls.config
+        print(model_config)
+        model_ = model_cls(num_classes=len(self.label_map))
 
         ex = self.dataset.example()
 
         out = model_(ex["input"].unsqueeze(dim=0))
 
-        self.log(f"Calculated in_channels for classification head: {out.shape[1:]}")
+        self.log(f"Calculated in_features for classification head: {out.shape[1:]}")
 
-        in_channels = torch.tensor(out.shape[1:]).sum().item()
-        return ClassificationModel(model_, in_channels, len(self.label_map))
+        in_features = torch.tensor(out.shape[1:]).sum().item()
+        return ClassificationModel(model_, in_features, len(self.label_map))
 
     @cached_property
     def label_map(self):
         self.log("Creating label map")
-        return LabelMap(labels=self.dataset._labels, **self.label_map_params)
+        return LabelMap(labels=self.dataset._labels)  # **self.label_map_params)
 
     @cached_property
     def preprocessing(self):
-        img_size = self.params["img_size"]
+        img_size = self.config.task.params["img_size"]
         return Compose([Resize(img_size, img_size)])
 
     @cached_property
@@ -85,21 +106,26 @@ class Classification(Task):
         )
 
     def get_transforms(self, val=False, **compose_params):
+        # bbox_params = BboxParams(
+        #     format="pascal_voc",
+        #     label_fields=["labels"],
+        # )
         if val:
             return Compose(
-                [self.preprocessing, Normalize(), ToTensorV2()], **compose_params
+                [self.preprocessing, Normalize(), ToTensorV2()],
+                **compose_params,
+                # bbox_params=bbox_params,
             )
         return Compose(
             [self.preprocessing, self.augmentations, Normalize(), ToTensorV2()],
             **compose_params,
+            # bbox_params=bbox_params,
         )
 
     def setup_dataset(self, **kwargs):
         self.dataset.prepare(
-            input=self.input,
-            outputs=dict(labels=self.labels, **kwargs),
             label_map=self.label_map,
-            params=self.params,
+            # params=self.params,
             get_transforms=self.get_transforms,
         )
 
@@ -129,4 +155,4 @@ class Classification(Task):
 
         self.metrics.update(out, labels, split=split)
 
-        return loss
+        return dict(loss=loss)

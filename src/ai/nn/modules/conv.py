@@ -13,6 +13,7 @@ class ConvBlock(nn.Module):
         dilation=1,
         activation=nn.ReLU,
         norm=nn.BatchNorm2d,
+        norm_first=True,
     ):
         super().__init__()
         self.conv = nn.Conv2d(
@@ -24,8 +25,13 @@ class ConvBlock(nn.Module):
             bias=bias,
             dilation=dilation,
         )
-        self.act = activation() if activation is not None else nn.Identity()
-        self.norm = norm(out_channels) if norm is not None else nn.Identity()
+        post = [
+            activation() if activation is not None else nn.Identity(),
+            norm(out_channels) if norm is not None else nn.Identity(),
+        ]
+        if norm_first:
+            post.reverse()
+        self.post = nn.Sequential(*post)
 
     def forward(self, x):
-        return self.norm(self.act(self.conv(x)))
+        return self.post(self.conv(x))
