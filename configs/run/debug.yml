@@ -1,0 +1,10 @@
+merge: default.yml
+dataset:
+  train:
+    size: 0.05
+  val:
+    size: 0.05
+run:
+  datamodule:
+    num_workers: 0
+    batch_size: 2

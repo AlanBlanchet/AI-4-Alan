@@ -1,0 +1,8 @@
+merge: datasets/imagenet.yml
+task:
+  type: classification
+  params:
+    img_size: 224
+  model:
+    type: ResNet
+    pretrained: True

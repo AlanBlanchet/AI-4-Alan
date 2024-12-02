@@ -1,0 +1,10 @@
+dataset:
+  source: hf
+  input: image
+  labels: label
+  params:
+    path: ylecun/mnist
+  train:
+    name: train
+  val:
+    name: test

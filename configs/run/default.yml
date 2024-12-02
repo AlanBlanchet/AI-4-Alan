@@ -1,0 +1,9 @@
+run:
+  action: val
+  lightning:
+    max_epochs: 4
+    deterministic: False
+    precision: bf16-mixed
+  datamodule:
+    num_workers: 8
+    batch_size: 16

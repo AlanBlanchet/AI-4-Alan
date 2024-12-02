@@ -1,4 +1,4 @@
 # ruff: noqa: F403
+from ..compat.module import *
 from .conv import *
-from .module import *
 from .res import *

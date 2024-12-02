@@ -1,0 +1,68 @@
+{
+  // Use IntelliSense to learn about possible attributes.
+  // Hover to view descriptions of existing attributes.
+  // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "experiment",
+      "type": "debugpy",
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}",
+      "request": "launch",
+      "module": "ai.cli.debug",
+      "args": ["train", "configs/agents/dqn.yml"],
+      "pythonArgs": ["-Xfrozen_modules=off"],
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "0",
+        "PYDEVD_DISABLE_FILE_VALIDATION": "1"
+      },
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "vit",
+      "type": "debugpy",
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}",
+      "request": "launch",
+      "module": "ai.cli.debug",
+      "args": ["val", "configs/models/vit/b_16.yml"],
+      "pythonArgs": ["-Xfrozen_modules=off"],
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "0",
+        "PYDEVD_DISABLE_FILE_VALIDATION": "1"
+      },
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "resnet18",
+      "type": "debugpy",
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}",
+      "request": "launch",
+      "module": "ai.cli.debug",
+      "args": ["val", "configs/models/resnet/18.yml"],
+      "pythonArgs": ["-Xfrozen_modules=off"],
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "1",
+        "PYDEVD_DISABLE_FILE_VALIDATION": "1"
+      },
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "detr-r50",
+      "type": "debugpy",
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}",
+      "request": "launch",
+      "module": "ai.cli.debug",
+      "args": ["val", "configs/models/detr/r50.yml"],
+      "pythonArgs": ["-Xfrozen_modules=off"],
+      "env": {
+        "CUDA_VISIBLE_DEVICES": "0",
+        "PYDEVD_DISABLE_FILE_VALIDATION": "1"
+      },
+      "console": "integratedTerminal"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+merge: default.yml
+task:
+  model:
+    variant: L_16

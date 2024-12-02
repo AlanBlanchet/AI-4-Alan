@@ -1,59 +1,59 @@
-import os
-from typing import Any, ClassVar, Self
+from __future__ import annotations
 
-from pydantic import BaseModel
+from typing import Self
+
+from deepmerge import always_merger
+from pydantic import BaseModel, Field, field_validator
 
 from ..registry import REGISTER
-
-
-class Loggable:
-    log_name: ClassVar[str] = "main"
-
-    @classmethod
-    def _log_prefix(self) -> str:
-        return f"[{self.log_name.capitalize()}] " if self.log_name else ""
-
-    @classmethod
-    def log(cls, *msg: list[Any]):
-        if os.getenv("MAIN_PROCESS", "1") == "1":
-            print(cls._log_prefix() + " ".join([str(m) for m in msg]))
-
-
-class AdvancedBase(BaseModel):
-    def merge(self, **kwargs):
-        print({**self.model_dump(), **kwargs})
-        return self.__class__(**{**self.model_dump(), **kwargs})
+from .log import Loggable
 
 
 class Base(BaseModel, Loggable):
+    class Config:
+        arbitrary_types_allowed = True
+
     @classmethod
-    def from_config(cls, config: dict, deep=False) -> Self:
+    def from_config(cls, config: dict) -> Self:
         config = config.copy()
         source = config.pop("type")
 
-        if deep:
-            # Build subconfigs
-            for key, value in config.items():
-                if isinstance(value, dict):
-                    if "type" in value:
-                        # Value is another config
-                        config[key] = cls.from_config(value)
-
         src_cls = REGISTER[source]
 
-        try:
-            base_config = src_cls.config(**config)
-        except AttributeError:
+        if hasattr(src_cls, "config"):
+            src_config = src_cls.config(**config)
+        else:
             cls.log(
                 f"{src_cls.__name__} has no config. Falling back to default constructor."
             )
             return src_cls(**config)
 
-        return src_cls(base_config)
+        return src_cls(src_config)
 
-    @classmethod
-    def build(cls, **kwargs) -> Self:
-        return cls(**kwargs)
+
+class ModuleConfig(Base):
+    type: str = Field(default=None, validate_default=True)
+    train: bool = False
+
+    @field_validator("type", mode="before")
+    def validate_type(cls, value):
+        if value is None:
+            name = cls.__name__.split("Config")[0]
+            return name
+        return value
 
     class Config:
         arbitrary_types_allowed = True
+        extra = "allow"
+
+    def merge(self, config: ModuleConfig | dict, **kwargs):
+        if isinstance(config, ModuleConfig):
+            # We are receiving a config
+            config = config.model_dump()
+
+        merged = {}
+        always_merger.merge(merged, self.model_dump(exclude_none=True))
+        always_merger.merge(merged, config)
+        always_merger.merge(merged, kwargs)
+
+        return self.__class__(**merged)

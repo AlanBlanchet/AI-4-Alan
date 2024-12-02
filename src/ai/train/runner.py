@@ -4,11 +4,13 @@ from functools import cached_property
 from pprint import pformat
 from typing import ClassVar
 
+import torch
 from lightning import Trainer
 from pydantic import computed_field
 
 from ..configs.base import Base
 from ..configs.main import MainConfig
+from ..configs.log import Color
 from ..task.task import Task
 
 # from ..dataset.base_dataset import BaseDataset
@@ -16,9 +18,8 @@ from .datamodule import AIDataModule
 
 
 class Runner(Base):
-    _: ClassVar[str] = "trainer"
-
-    log_name: ClassVar[str] = "trainer"
+    log_name: ClassVar[str] = "runner"
+    color: ClassVar[str] = Color.green
 
     task: Task
     config: MainConfig
@@ -38,33 +39,24 @@ class Runner(Base):
             if logger:
                 lightning["logger"] = [logger]
 
-        return Trainer(**lightning, default_root_dir=self.task.run_p)
+        # Training configuration
+        # TODO add as config
+        torch.set_float32_matmul_precision("medium")
 
-    # @computed_field
-    # @cached_property
-    # def module(self) -> AIModule:
-    # path = Path(__file__).parents[3] / "lightning_logs"
-    # recent_ckpts = sorted(path.rglob("*.ckpt"), key=lambda x: x.lstat().st_mtime)
-    # if len(recent_ckpts) > 0 and LOAD_CKPT:
-    #     self.log(f"Loaded model from {recent_ckpts[-1]}")
-    #     return AIModule.load_from_checkpoint(recent_ckpts[-1])
-    # else:
-    # module = AIModule(self.task)
-    # self.log("Compiling model")
-    # torch.compile(module)
-    # return module
+        return Trainer(**lightning, default_root_dir=self.task.run_p)
 
     @computed_field
     @cached_property
     def datamodule(self) -> AIDataModule:
-        return AIDataModule(dataset=self.dataset, params=self.config.run.datamodule)
+        return AIDataModule(task=self.task)
 
     def __call__(self):
         self.log(f"Dataset example sample :\n{pformat(self.dataset.example())}")
         self.log(f"Dataset :\n{pformat(self.dataset)}")
 
-        if self.config.task.val_only:
-            self.log("Validation only")
+        if self.config.run.val_only:
+            self.log("Validating with pytorch-lightning")
             self.trainer.validate(self.task.lightning_model, datamodule=self.datamodule)
         else:
+            self.log("Training with pytorch-lightning")
             self.trainer.fit(self.task.lightning_model, datamodule=self.datamodule)

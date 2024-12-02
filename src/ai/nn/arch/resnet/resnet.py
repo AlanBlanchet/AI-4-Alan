@@ -1,23 +1,20 @@
 import torch.nn as nn
 
-from ....configs.models import Backbone
 from ....registry import REGISTER
+from ...compat.backbone import Backbone
+from ...compat.merge import SumSequential
 from ...modules import ResidualBlock
 from ...modules.conv import ConvBlock
-from ..compat import Pretrained
-from .configs import ResNetConfig, configs
+from .configs import ResNetConfig, ResNetLayerConfig
 
 
 @REGISTER
-class ResNet(Pretrained, Backbone):
-    config = ResNetConfig
+class ResNet(Backbone):
+    config: ResNetConfig = ResNetConfig
     default_task = "classification"
 
     def __init__(self, config: ResNetConfig):
-        super().__init__()
-
-        self.config = config
-        res_config = config.config
+        super().__init__(config)
 
         self.conv1 = ConvBlock(
             config.in_channels, 64, kernel_size=7, stride=2, padding=3
@@ -25,62 +22,59 @@ class ResNet(Pretrained, Backbone):
 
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
 
-        self.conv2_x = self._make_layer(res_config[0])
-        self.conv3_x = self._make_layer(res_config[1], res_config[0][0][-1][0])
-        self.conv4_x = self._make_layer(res_config[2], res_config[1][0][-1][0])
-        self.conv5_x = self._make_layer(res_config[3], res_config[2][0][-1][0])
+        layers = []
+        in_channels = config.first_layer_channels
+        # Build all the ResNetLayers
+        for i, layer_conf in enumerate(config.layers):
+            layer = self.make_layer(in_channels, layer_conf, first_layer=i == 0)
+            in_channels = layer_conf.out_channels
+            layers.append(layer)
+        self.layers = nn.ModuleList(layers)
 
-        self.head = nn.Sequential(
+        # Create a head for the model
+        self.head = SumSequential(
             nn.AdaptiveAvgPool2d((1, 1)),
             nn.Flatten(),
-            nn.Linear(res_config[-1][0][-1][0], config.num_classes),
+            nn.Linear(config.out_channels, config.num_classes),
         )
 
-        self.conv1.post[0].running_mean.fill_(0)
-        self.init_weights()
-
-    @classmethod
-    def build(cls, **kwargs):
-        config = ResNetConfig(**kwargs)
-        return cls(config)
-
-    def _make_layer(self, config: tuple[list[tuple[int, int]], int], in_channels=None):
+    @staticmethod
+    def make_layer(in_channels: int, layer_conf: ResNetLayerConfig, first_layer=False):
+        """
+        We are building a ResNetLayer
+        """
         layers = []
 
-        is_first = in_channels is None
+        # Initialisation
+        n, out_channels = layer_conf.num, layer_conf.out_channels
 
-        if is_first:
-            in_channels = 64
-
-        params, n = config
-
-        out_channels = params[-1][0]
+        # Create the blocks inside the ResNetLayer
         for i in range(n):
             shortcut = None
             # Stride 2 on first block after first layer
-            stride = 2 if i == 0 and not is_first else 1
+            stride = 2 if i == 0 and not first_layer else 1
 
+            # If first block in layer and in_channels != out_channels, downsample
             if i == 0 and in_channels != out_channels:
-                # Downsample
-                shortcut = nn.Sequential(
-                    nn.Conv2d(
-                        in_channels,
-                        out_channels,
-                        kernel_size=1,
-                        stride=stride,
-                        bias=False,
-                    ),
-                    nn.BatchNorm2d(out_channels),
+                shortcut = ConvBlock(
+                    in_channels,
+                    out_channels,
+                    kernel_size=1,
+                    stride=stride,
+                    bias=False,
+                    activation=None,  # No activation on shortcut
                 )
 
-            layers.append(
-                ResidualBlock(
-                    params,
-                    in_channels,
-                    shortcut,
-                    stride=stride,
-                )
+            res_block = ResidualBlock(
+                in_channels,
+                blocks_out_channels=layer_conf.blocks_out_channels,
+                blocks_kernels=layer_conf.blocks_kernel_size,
+                shortcut=shortcut,
+                stride=stride,
             )
+
+            layers.append(res_block)
+            # Next block in layer will have the same in_channels as the previous block
             in_channels = out_channels
 
         return nn.ModuleList(layers)
@@ -90,9 +84,11 @@ class ResNet(Pretrained, Backbone):
         x = self.maxpool(x)
 
         feats = []
-        for conv_x in [self.conv2_x, self.conv3_x, self.conv4_x, self.conv5_x]:
-            for layer in conv_x:
-                x = layer(x)
+        for layer in self.layers:
+            for block in layer:
+                x = block(x)
+
+            # Store the feature map of the layer
             feats.append(x)
 
         return feats
@@ -101,38 +97,27 @@ class ResNet(Pretrained, Backbone):
         feats = self.features(x)
         return self.head(feats[-1])
 
-    def init_weights(self):
-        if self.config.pretrained:
-            self.load_pretrained()
-        else:
-            ...
+
+# @REGISTER
+# class ResNet18(ResNet):
+#     variant = "18"
 
 
-@REGISTER
-class ResNet18(ResNet):
-    def __init__(self, config: ResNetConfig = ResNetConfig(config=configs["18"])):
-        super().__init__(config.merge(config=configs["18"]))
+# @REGISTER
+# class ResNet34(ResNet):
+#     variant = "34"
 
 
-@REGISTER
-class ResNet34(ResNet):
-    def __init__(self, config: ResNetConfig = ResNetConfig(config=configs["34"])):
-        super().__init__(config.merge(config=configs["34"]))
+# @REGISTER
+# class ResNet50(ResNet):
+#     variant = "50"
 
 
-@REGISTER
-class ResNet50(ResNet):
-    def __init__(self, config: ResNetConfig = ResNetConfig(config=configs["50"])):
-        super().__init__(config.merge(config=configs["50"]))
+# @REGISTER
+# class ResNet101(ResNet):
+#     variant = "101"
 
 
-@REGISTER
-class ResNet101(ResNet):
-    def __init__(self, config: ResNetConfig = ResNetConfig(config=configs["101"])):
-        super().__init__(config.merge(config=configs["101"]))
-
-
-@REGISTER
-class ResNet152(ResNet):
-    def __init__(self, config: ResNetConfig = ResNetConfig(config=configs["152"])):
-        super().__init__(config.merge(config=configs["152"]))
+# @REGISTER
+# class ResNet152(ResNet):
+#     variant = "152"

@@ -1,5 +1,11 @@
+from pydantic import Field, field_validator
+
+from ....configs.backbone import BackboneConfig
+from ....configs.pretrained import PretrainedConfig
+from ....configs.task import ClassificationConfig
+
 configs = {
-    "A": [
+    "11": [
         ["C", 3, 64],
         "M",
         ["C", 64, 128],
@@ -14,7 +20,7 @@ configs = {
         ["C", 512, 512],
         "M",
     ],
-    "A-LRN": [
+    "11-LRN": [
         ["C", 3, 64],
         "L",
         "M",
@@ -30,7 +36,7 @@ configs = {
         ["C", 512, 512],
         "M",
     ],
-    "B": [
+    "13": [
         ["C", 3, 64],
         ["C", 64, 64],
         "M",
@@ -47,7 +53,7 @@ configs = {
         ["C", 512, 512],
         "M",
     ],
-    "C": [
+    "16": [
         ["C", 3, 64],
         ["C", 64, 64],
         "M",
@@ -56,15 +62,16 @@ configs = {
         "M",
         ["C", 128, 256],
         ["C", 256, 256],
-        ["C", 256, 256, 1],
+        ["C", 256, 256],
         "M",
         ["C", 256, 512],
         ["C", 512, 512],
-        ["C", 512, 512, 1],
+        ["C", 512, 512],
         "M",
         ["C", 512, 512],
         ["C", 512, 512],
-        ["C", 512, 512, 1],
+        ["C", 512, 512],
+        # Ususally its ["C", 512, 512, 1] but timm doesn't use conv 1x1
         "M",
     ],
     "D": [
@@ -111,3 +118,25 @@ configs = {
         "M",
     ],
 }
+
+
+class VGGConfig(BackboneConfig, ClassificationConfig):
+    variants = ["16"]
+
+    pretrained_recommendations = PretrainedConfig.create_recommendations(
+        "IMAGENET", variants=variants
+    )
+
+    in_channels: int = 3
+    config: list = Field(default=None, validate_default=True)
+
+    @property
+    def out_channels(self):
+        return self.layers[-1].out_channels
+
+    @field_validator("config", mode="before")
+    def validate_layers(cls, value, values):
+        if value is None:
+            variant = values.data["variant"]
+            return configs[variant]
+        return value

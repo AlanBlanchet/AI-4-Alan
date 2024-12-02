@@ -11,10 +11,8 @@ from neptune import Run
 from pydantic import computed_field
 
 from ..configs.base import Base
-from ..registry import REGISTER
 
 
-@REGISTER
 class AILogger(Logger, Base):
     log_name: ClassVar[str] = "ai-logger"
 

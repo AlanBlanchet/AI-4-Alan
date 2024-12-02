@@ -1,23 +1,24 @@
 import torch
 import torch.nn as nn
 
-from ....registry import REGISTER
-from ....task.detection.detection import decode
-from ....utils.arch import build_arch_module
+from ....registry.registry import REGISTER
+
+# from ....task.detection.detection import decode
+from ...compat.module import Module
 from ...modules.conv import ConvBlock
-from ..compat import ISSD
-from ..vgg.models import VGG16
+from .config import SSDConfig
 
 
-@REGISTER(requires=["backbone", "num_classes"])
-class SSD(nn.Module):
-    def __init__(self, backbone: ISSD | str = None, num_classes=20):
-        super().__init__()
-        backbone = backbone if backbone else VGG16()
-        if isinstance(backbone, str):
-            backbone = build_arch_module(backbone)
+# TODO Revisit this
+@REGISTER
+class SSD(Module):
+    config: SSDConfig = SSDConfig
 
-        self.num_classes = num_classes
+    def __init__(self, config: SSDConfig):
+        super().__init__(config)
+        raise NotImplementedError("SSD has changed a lot and requires to be udpated")
+
+        self.backbone = config.backbone.build()
 
         compat = getattr(backbone, "ssd_compat", None)
         if not compat or not callable(compat):
@@ -26,6 +27,7 @@ class SSD(nn.Module):
             )
 
         # Backbone features
+        # TODO Adapt
         ssd_compat = backbone.ssd_compat()
         self.features = ssd_compat["features"]
         extras = ssd_compat.get("extras", [])
@@ -89,15 +91,3 @@ class SSD(nn.Module):
         conf, loc = decode(boxes, self.num_defaults, self.num_classes)
 
         return dict(scores=conf, boxes=loc)
-
-
-@REGISTER
-class SSD300(SSD):
-    def __init__(self, backbone: ISSD | str = None, num_classes=20):
-        super().__init__(backbone, num_classes)
-
-
-@REGISTER
-class SSD512(SSD):
-    def __init__(self, backbone: ISSD | str = None, num_classes=20):
-        super().__init__(backbone, num_classes)

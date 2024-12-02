@@ -3,16 +3,32 @@ from collections import OrderedDict
 import torch.nn as nn
 
 from ....registry import REGISTER
+from ...compat.backbone import Backbone
 from ...modules import ConvBlock
-from .configs import configs
+from .configs import VGGConfig
 
 
 @REGISTER
-class VGG(nn.Module):
-    def __init__(self, config=configs["C"], in_channels=3):
-        super().__init__()
+class VGG(Backbone):
+    config: VGGConfig = VGGConfig
 
-        self.features = self._generate(config, in_channels)
+    def __init__(self, config: VGGConfig):
+        super().__init__(config)
+
+        in_channels = config.in_channels
+        self.layers = self._generate(config.config, in_channels)
+
+        self.head = nn.Sequential(
+            nn.AdaptiveAvgPool2d((7, 7)),
+            nn.Conv2d(512, 4096, kernel_size=7),
+            nn.ReLU(),
+            nn.Dropout(),
+            nn.Conv2d(4096, 4096, kernel_size=1),
+            nn.ReLU(),
+            nn.Dropout(),
+            nn.Flatten(),
+            nn.Linear(4096, config.num_classes),
+        )
 
     def _generate(self, arch: list, in_channels: int):
         layers = []
@@ -37,11 +53,17 @@ class VGG(nn.Module):
                     # Padding = 0 for K=1
                     padding = 0 if len(ps) == 3 and ps[-1] == 1 else 1
                     layers.append(
-                        (f"conv{conv+1}_{sub_conv+1}", ConvBlock(*ps, padding=padding))
+                        (
+                            f"conv{conv+1}_{sub_conv+1}",
+                            ConvBlock(*ps, padding=padding, norm=None),
+                        )
                     )
                     sub_conv += 1
 
         return nn.Sequential(OrderedDict(layers))
 
+    def features(self, x):
+        return self.layers(x)
+
     def forward(self, x):
-        return self.features(x)
+        return self.head(self.features(x))

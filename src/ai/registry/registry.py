@@ -42,14 +42,9 @@ class Registry(BaseModel):
             item["children"] = {}
 
     def _resolve_index(self):
-        self._clear()
         registry = deepcopy(self._registry)
         for module_name, item in self._registry.items():
             module = __import__(item["module"], fromlist=[item["name"]])
-            if item["name"] not in module.__dict__:
-                print(f"Removing old module {module_name}")
-                del registry[module_name]
-                continue
 
             cls = module.__dict__[item["name"]]
             bases = inspect.getmro(cls)[1:]
@@ -59,9 +54,11 @@ class Registry(BaseModel):
                 if base_name in self._registry:
                     registry[base_name]["children"].update({module_name: len(bases)})
                     registry[module_name]["parents"].add(base_name)
+
         for item in registry.values():
             children: set = item["children"]
             item["children"] = dict(sorted(children.items(), key=lambda x: x[1]))
+
         self._registry = registry
 
     def _register(self, module, **kwargs: dict):
@@ -86,14 +83,11 @@ class Registry(BaseModel):
                 import_module(module)
             except Exception as e:
                 raise ValueError(f"Error importing {module}") from e
-        # # Get all root modules into scope
-        # if isinstance(self.root, list):
-        #     for root in self.root:
-        #         import_module(root)
-        # else:
-        #     import_module(self.root)
 
     def calculate_index(self):
+        # Empty the registry
+        self._registry = {}
+        # Get all registered modules
         self._scope()
         # Resolve their index
         self._resolve_index()
@@ -169,6 +163,9 @@ class Registry(BaseModel):
             *headers,
             title=f"Registry {self.name}",
         )
+
+        # Sort the models
+        resolved = dict(sorted(resolved.items(), key=lambda x: x[1]["name"]))
 
         for item in resolved.values():
             row = [item["name"]]

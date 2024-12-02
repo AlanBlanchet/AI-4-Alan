@@ -8,14 +8,10 @@ import torch.optim as optim
 from lightning import LightningModule
 from torch.optim.lr_scheduler import ExponentialLR
 
-from ..registry import REGISTER
-from .defaults import BATCH_SIZE
-
 if TYPE_CHECKING:
     from ..task.task import Task
 
 
-@REGISTER
 class AIModule(LightningModule):
     def __init__(self, task: Task):
         super().__init__()
@@ -31,101 +27,61 @@ class AIModule(LightningModule):
         for k, module in self.task.modules().items():
             setattr(self, k, module)
 
-        # def init_weights(m):
-        #     if isinstance(m, nn.Linear):
-        #         torch.nn.init.xavier_uniform_(m.weight)
-        #         m.bias.data.fill_(0.01)
-        #     elif isinstance(m, nn.Conv2d):
-        #         torch.nn.init.xavier_uniform_(m.weight)
+        self.set_random_example_idx()
 
-        # self.model.apply(init_weights)
+    @property
+    def config(self):
+        return self.task.config
 
-        self.random_batch_idx = None
+    @property
+    def datamodule_config(self):
+        return self.config.run.datamodule
+
+    def model_parameters(self):
+        return self.model.parameters()
 
     def log(self, name: str, value: Any, prog_bar: bool = False):
         # Override for custom logger
         if isinstance(value, torch.Tensor) and (value.ndim == 0 or value.numel() == 1):
-            super().log(name, value, prog_bar=prog_bar)
+            super().log(name, value, prog_bar=prog_bar, sync_dist=True)
         elif self.log_ is not None:
             self.log_(name, value, prog_bar=prog_bar)
 
     def forward(self, x):
+        if isinstance(x, list):
+            return self.model(*x)
         return self.model(x)
 
     def training_step(self, batch, batch_idx):
-        return self.step(batch, batch_idx, "train")
+        return self.step(batch, batch_idx, "train", plot_idx=self.random_train_idx)
 
     def validation_step(self, batch, batch_idx):
-        return self.step(batch, batch_idx, "val", plot_idx=self.random_batch_idx)
+        return self.step(batch, batch_idx, "val", plot_idx=self.random_val_idx)
 
     def step(self, batch, batch_idx: int, split: str, plot_idx: list[int] = None):
-        losses = self.task.process(self.model, batch, split)
+        # Get the possible item to show as example
+        example_item_idx = (
+            None if (plot_idx is None or plot_idx[0] != batch_idx) else plot_idx[1]
+        )
+        # Process the batch
+        losses = self.task.process(
+            model=self, batch=batch, split=split, item_idx=example_item_idx
+        )
+        # Log the losses
         for k, v in losses.items():
-            self.log(f"{split}/{k}", v, prog_bar=split == "train")
+            # Change the precision of the loss to be a fixed 6
+            v = torch.tensor(float(f"{v:.6f}"))
+            self.log(
+                f"{split}/{k}",
+                (v / self.datamodule_config.batch_size),
+                prog_bar=split == "train",
+            )
+
+        # INFO : This is the only way to get the worker info
+        # torch.utils.data.get_worker_info()
+
+        # Return the losses
         return losses
-
-        # for b in range(len(decoded_locs)):
-        #     b_max_labels = max_labels[b]
-        #     score_mask = b_max_labels > 0.7
-        #     filtered_max_labels = b_max_labels[score_mask]
-        #     filtered_max_labels_idx = max_labels_idx[b][score_mask]
-        #     filtered_locs_xy = decoded_locs_xy[b][score_mask]
-
-        #     kept_idx = batched_nms(
-        #         filtered_locs_xy, filtered_max_labels, filtered_max_labels_idx, 0.5
-        #     )
-        #     kept_locs = filtered_locs_xy[kept_idx]
-        #     kept_scores = filtered_max_labels[kept_idx]
-        #     kept_ids = filtered_max_labels_idx[kept_idx]
-        #     # Remove backgrounds
-        #     bg_mask = kept_ids != 0
-        #     kept_locs = kept_locs[bg_mask]
-        #     kept_ids = kept_ids[bg_mask]
-
-        #     masked_gt_locs = gt_locs[b][mask[b]]
-        #     masked_gt_ids = label_ids[b][mask[b]]
-
-        #     # Example
-        #     if not is_train and plot_idx is not None and (batch_idx, b) == plot_idx:
-        #         ex_size = 800
-        #         ex_image = image[b] * 255  # (C, H, W)
-        #         ex_kept_locs = (kept_locs * ex_size).cpu()  # Rescale
-        #         ex_gt_locs = masked_gt_locs.cpu() * ex_size
-        #         ex_kept_labels = [
-        #             f"{label} ( {score*100:.2f}% )"
-        #             for label, score in zip(
-        #                 self.dataset.label_map[kept_ids], kept_scores
-        #             )
-        #         ]
-        #         ex_gt_ids = masked_gt_ids.cpu()
-        #         ex_gt_labels = self.dataset.label_map[ex_gt_ids]
-
-        #         # Gt boxes
-        #         ex_image = (
-        #             resize(ex_image, (ex_size, ex_size), antialias=True)
-        #             .cpu()
-        #             .to(dtype=torch.uint8)
-        #         )
-        #         ex_image = draw_bounding_boxes(
-        #             image=ex_image,
-        #             boxes=ex_gt_locs,
-        #             colors=[(0, 0, 255)] * ex_gt_locs.size(0),
-        #             labels=ex_gt_labels,
-        #         )
-        #         # Pred boxes
-        #         ex_image = draw_bounding_boxes(
-        #             image=ex_image,
-        #             boxes=ex_kept_locs,
-        #             colors=[(255, 0, 0)] * kept_locs.shape[0],
-        #             labels=ex_kept_labels,
-        #         )
-
-        #         self.log(f"{split}/nms_boxes", kept_ids.size(0))
-        #         self.logger.experiment.add_image(
-        #             f"image/{split}", ex_image.numpy(), self.current_epoch
-        #         )
-
-        # return loss
 
     def log_metric(self, metric: dict, split: str):
         for k, v in metric.items():
@@ -162,22 +118,21 @@ class AIModule(LightningModule):
                         if self.log_ is not None:
                             self.log_(f"{k}", fig)
 
-    def epoch_step(self, split: str):
+    def epoch_end(self, split: str):
         metrics = self.metrics.compute(split=split)
         metrics = {f"{split}/{k}": v for k, v in metrics.items()}
         self.log_metric(metrics, split)
 
+    def on_train_epoch_start(self) -> None:
+        self.train()
+
     def on_train_epoch_end(self):
-        if not self.metric_val_only:
-            self.epoch_step("train")
+        if not self.task.val_only_metrics:
+            self.epoch_end("train")
 
     def on_validation_epoch_end(self):
-        self.random_batch_idx = (
-            torch.randint(0, len(self.task.dataset.val()) // BATCH_SIZE, (1,)).item(),
-            torch.randint(0, BATCH_SIZE, (1,)).item(),
-        )
-
-        self.epoch_step("val")
+        self.set_random_example_idx()
+        self.epoch_end("val")
 
     def configure_optimizers(self):
         opt = optim.AdamW(self.model.parameters(), lr=4e-4)
@@ -188,6 +143,23 @@ class AIModule(LightningModule):
                 interval="epoch",
             ),
         )
+
+    def get_random_example_idx(self, dataset):
+        if hasattr(dataset, "__len__"):
+            B = self.datamodule_config.batch_size
+            return (
+                torch.randint(0, len(dataset) // B - 1, (1,)).item(),
+                torch.randint(0, B, (1,)).item(),
+            )
+        return None
+
+    def set_random_example_idx(self):
+        if self.task.train:
+            self.random_train_idx = self.get_random_example_idx(
+                self.task.dataset.train()
+            )
+
+        self.random_val_idx = self.get_random_example_idx(self.task.dataset.val())
 
     @property
     def metric_val_only(self):

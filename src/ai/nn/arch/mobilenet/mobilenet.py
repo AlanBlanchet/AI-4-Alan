@@ -34,6 +34,7 @@ class DepthWiseSeparableConv2d(nn.Module):
         return x
 
 
+# TODO Adapt to latest changes
 @REGISTER
 class MobileNet(nn.Module):
     """
@@ -87,16 +88,3 @@ class MobileNet(nn.Module):
         x = self.dws8(x)
         x = self.pool(x)
         return x
-
-
-@REGISTER
-class MobileNetV1(MobileNet): ...
-
-
-@REGISTER
-class MobileNetV2(nn.Module):
-    # TODO
-    def __init__(self):
-        super().__init__()
-
-        raise NotImplementedError()

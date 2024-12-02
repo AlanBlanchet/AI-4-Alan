@@ -1,39 +1,32 @@
 from lightning import LightningDataModule
 from torch.utils.data import DataLoader
 
-from ..dataset.base_dataset import BaseDataset
 from ..dataset.collator.mask import masked_collator
-from ..utils.env import AIEnv
+from ..task.task import Task
 
 
 class AIDataModule(LightningDataModule):
-    def __init__(self, dataset: BaseDataset, params: dict):
+    def __init__(self, task: Task):
         super().__init__()
-        self.dataset = dataset
-        self.params = params
+        self.task = task
+        self.dataset = task.dataset
+        self.config = task.config.run.datamodule
+
+    @property
+    def necessary_params(self):
+        return dict(collate_fn=masked_collator)
 
     def train_dataloader(self):
-        params = self.params.copy()
-        num_workers = params.pop("num_workers", AIEnv.DEFAULT_NUM_PROC)
         return DataLoader(
-            self.dataset.train(),
-            shuffle=True,
-            pin_memory=True,
-            **params,
-            persistent_workers=num_workers > 0,
-            num_workers=num_workers,
-            collate_fn=masked_collator,
+            **self.config.model_dump(),
+            **self.necessary_params,
+            shuffle=self.task.train_shuffle,
+            dataset=self.dataset.train(),
         )
 
     def val_dataloader(self):
-        params = self.params.copy()
-        num_workers = params.pop("num_workers", AIEnv.DEFAULT_NUM_PROC)
         return DataLoader(
-            self.dataset.val(),
-            shuffle=False,
-            pin_memory=True,
-            **params,
-            persistent_workers=num_workers > 0,
-            num_workers=num_workers,
-            collate_fn=masked_collator,
+            **self.config.model_dump(),
+            **self.necessary_params,
+            dataset=self.dataset.val(),
         )

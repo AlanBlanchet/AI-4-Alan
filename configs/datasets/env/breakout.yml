@@ -1,0 +1,21 @@
+dataset:
+  source: gym
+  params:
+    name: ALE/Breakout-v5
+    max_steps: 200
+    # input:
+    #   name: image
+    #   other: image_mask
+    # image:
+    #   preprocess: None
+    # params:
+    #   path: detection-datasets/coco
+  input: obs
+  # labels: objects.category
+  # bbox:
+  #   name: objects.bbox
+  #   format: pascal_voc
+  # train:
+  #   name: train
+  # val:
+  #   name: val

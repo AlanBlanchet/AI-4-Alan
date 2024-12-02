@@ -5,28 +5,35 @@ from .conv import ConvBlock
 
 class ResidualBlock(nn.Module):
     def __init__(
-        self, params: list[tuple[int, int]], in_channels, shortcut=None, stride=1
+        self,
+        in_channels,
+        blocks_out_channels: list[int],
+        blocks_kernels: list[int],
+        shortcut=None,
+        stride=1,
     ):
         super().__init__()
 
         layers = []
 
         if in_channels is None:
-            in_channels = params[0][0]
+            in_channels = blocks_out_channels[0]
 
-        for i, param in enumerate(params):
-            out_channels, kernel = param
+        for i, (out_c, kernel_size) in enumerate(
+            zip(blocks_out_channels, blocks_kernels)
+        ):
+            last_block = i == len(blocks_out_channels) - 1
             layers.append(
                 ConvBlock(
                     in_channels,
-                    out_channels,
-                    kernel,
-                    padding=1 if kernel == 3 else 0,
-                    stride=1 if i > 0 else stride,
-                    activation=nn.ReLU if i < len(params) - 1 else None,
+                    out_channels=out_c,
+                    kernel_size=kernel_size,
+                    padding=1 if kernel_size == 3 else 0,
+                    stride=stride if i == 1 else 1,
+                    activation=None if last_block else nn.ReLU,
                 )
             )
-            in_channels = out_channels
+            in_channels = out_c
 
         self.layers = nn.ModuleList(layers)
         self.act = nn.ReLU()

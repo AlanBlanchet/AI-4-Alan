@@ -1,0 +1,21 @@
+merge: datasets/env/breakout.yml
+
+dataset:
+  params:
+    steps: 2000
+task:
+  type: reinforcementlearning
+  model:
+    type: DQN
+# dataset:
+#   input:
+#     name: image
+#     other: image_mask
+#   image:
+#     preprocess: None
+run:
+  action: train
+  # lightning:
+  #   check_dataloader_collate_fn: False
+  datamodule:
+    num_workers: 0

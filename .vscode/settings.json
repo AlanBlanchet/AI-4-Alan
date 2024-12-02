@@ -32,6 +32,8 @@
       "source.fixAll.markdownlint": "explicit"
     }
   },
+  "ruff.linter.rules.notebooks": false,
+  "ruff.enabled": false,
   "python.testing.pytestArgs": ["."],
   "python.testing.unittestEnabled": false,
   "python.testing.pytestEnabled": true

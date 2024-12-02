@@ -1,31 +1,4 @@
-merge:
+merge: default.yml
 task:
-  type: classification
-  input: image
-  labels: label
-  val_only: True
-  params:
-    img_size: 224
   model:
-    type: ResNet34
-    pretrained: True
-dataset:
-  source: hf
-  params:
-    path: ILSVRC/imagenet-1k
-    #name: voc2007_main
-    # streaming: true
-  train:
-    name: train
-    size: 0.03
-  val:
-    name: validation
-    size: 0.3
-run:
-  action: val
-  lightning:
-    max_epochs: 4
-    deterministic: False
-  datamodule:
-    num_workers: 8
-    batch_size: 4
+    variant: 34

@@ -1,0 +1,14 @@
+merge: datasets/imagenet.yml
+task:
+  type: classification
+  model:
+    type: ViT
+    pretrained: True
+    # patch_size: 4
+    # fixed_size: 28
+dataset:
+  image:
+    preprocess:
+      Resize:
+        width: 224
+        height: 224

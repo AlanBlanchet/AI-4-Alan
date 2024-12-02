@@ -3,7 +3,6 @@ from click import command
 
 @command("list", help="List all registers")
 def main():
-    from ...registry.registers import REGISTERS
+    from ...registry.registry import REGISTER
 
-    for registry in REGISTERS:
-        print(registry)
+    print(REGISTER)

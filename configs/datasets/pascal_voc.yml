@@ -1,8 +1,12 @@
 dataset:
-  _: HuggingFaceDataset
-  path: fuliucansheng/pascal_voc
-  name: voc2007_main
-  split_train:
+  source: hf
+  input: image
+  labels: objects.classes
+  bbox: objects.bboxes
+  params:
+    path: fuliucansheng/pascal_voc
+    name: voc2007_main
+  train:
     name: train
-  split_val:
-    name: validation
+  val:
+    name: val

@@ -1,5 +1,7 @@
 import torch.nn as nn
 
+from ..compat.merge import SumSequential
+
 
 class ConvBlock(nn.Module):
     def __init__(
@@ -22,7 +24,7 @@ class ConvBlock(nn.Module):
             kernel_size=kernel_size,
             padding=padding,
             stride=stride,
-            bias=bias,
+            bias=bias or norm is None,
             dilation=dilation,
         )
         post = [
@@ -31,7 +33,7 @@ class ConvBlock(nn.Module):
         ]
         if norm_first:
             post.reverse()
-        self.post = nn.Sequential(*post)
+        self.post = SumSequential(*post)
 
     def forward(self, x):
         return self.post(self.conv(x))

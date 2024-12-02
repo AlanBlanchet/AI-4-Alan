@@ -1,0 +1,13 @@
+dataset:
+  source: hf
+  params:
+    path: detection-datasets/coco
+  input: image
+  labels: objects.category
+  bbox:
+    name: objects.bbox
+    format: pascal_voc
+  train:
+    name: train
+  val:
+    name: val

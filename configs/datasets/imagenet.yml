@@ -1,0 +1,10 @@
+dataset:
+  source: hf
+  input: image
+  labels: label
+  params:
+    path: ILSVRC/imagenet-1k
+  train:
+    name: train
+  val:
+    name: validation

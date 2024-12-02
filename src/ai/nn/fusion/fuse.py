@@ -2,9 +2,59 @@
 This module contains the function to fuse nn.Modules together in order to gain speedups.
 """
 
+from abc import abstractmethod
 from copy import deepcopy
 
+import torch
 import torch.nn as nn
+
+
+class FusedModule(nn.Module):
+    @classmethod
+    def build(cls, state_dict: dict, *args, **kwargs):
+        # Build the new module from parameters
+        module = cls(*args, **kwargs)
+        # Load the state into the new module
+        module.load_state_dict(state_dict)
+        return module
+
+    @staticmethod
+    @abstractmethod
+    def load_from(x: nn.Module): ...
+
+
+class FrozenBatchNorm2d(FusedModule):
+    def __init__(self, num_features: int, eps: float = 1e-5):
+        super().__init__()
+        self.eps = eps
+        # Register weight / bias into a buffer instead of parameter so that they are not updated by autograd
+        self.register_buffer("weight", torch.ones(num_features))
+        self.register_buffer("bias", torch.zeros(num_features))
+        self.register_buffer("running_mean", torch.zeros(num_features))
+        self.register_buffer("running_var", torch.ones(num_features))
+
+    def forward(self, x):
+        # move reshapes to the beginning
+        # to make it fuser-friendly
+        w = self.weight.reshape(1, -1, 1, 1)
+        b = self.bias.reshape(1, -1, 1, 1)
+        rv = self.running_var.reshape(1, -1, 1, 1)
+        rm = self.running_mean.reshape(1, -1, 1, 1)
+        scale = w * (rv + self.eps).rsqrt()
+        bias = b - rm * scale
+        return x * scale + bias
+
+    def extra_repr(self):
+        return f"num_features={self.weight.shape[0]}, eps={self.eps}"
+
+    @classmethod
+    def load_from(cls, x: nn.Module):
+        if isinstance(x, nn.BatchNorm2d):
+            state = x.state_dict()
+            state.pop("num_batches_tracked", None)
+            return super().build(state, x.num_features)
+        else:
+            raise ValueError(f"Unknown module {x}")
 
 
 def fuse() -> nn.Module:

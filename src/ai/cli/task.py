@@ -1,35 +1,27 @@
 from pathlib import Path
 
-import yaml
+from click import UNPROCESSED
 from click import Path as CPath
-from click import command, option
-from questionary import autocomplete
+from click_extra import argument, extra_command
+
+from ..utils.env import AIEnv
 
 
-@command(help="Run a task")
-@option(
-    "--config",
-    "-c",
-    help="Use a specific config",
-    type=CPath(exists=True, path_type=Path),
-    default=None,
+@extra_command(
+    params=None,
+    context_settings=dict(
+        ignore_unknown_options=True,
+    ),
 )
-def main(config: Path):
-    from ..configs.main import MainConfig
-    from ..task.task import Task
-    from ..utils.env import AIEnv
+@argument("action", type=str, default="val")
+@argument("config", type=CPath(exists=True, path_type=Path))
+@argument("args", nargs=-1, type=UNPROCESSED)
+def main(action: str, config: Path, args: list[str]):
+    """Launch a task from a config file."""
+    from ..utils.task.task import run_task
 
-    if config is None:
-        config_ps = [AIEnv.from_root(p) for p in AIEnv.configs_p.rglob("*.yml")]
-
-        config = autocomplete("Chose a config", choices=config_ps)
-
-    config = yaml.full_load(config.read_text())
-
-    config = MainConfig(**config)
-
-    # AI.from_config(config).run()
-    Task.run(config)
+    extra_params = AIEnv.parse_extra_args(*args, f"run.action={action}")
+    run_task(config, extra_params=extra_params)
 
 
 if __name__ == "__main__":

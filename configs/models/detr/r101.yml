@@ -1,0 +1,6 @@
+merge: default.yml
+task:
+  model:
+    type: DETR
+    variant: r101
+    pretrained: True

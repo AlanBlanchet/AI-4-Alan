@@ -3,6 +3,7 @@ import torch.nn as nn
 from ...modules.conv import ConvBlock
 
 
+# TODO Adapt to latest changes
 class RepVGGBlock(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1):
         super().__init__()

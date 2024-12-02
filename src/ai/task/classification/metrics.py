@@ -51,9 +51,9 @@ class ClassificationMetrics(torchmetrics.Metric):
         # TODO fix probabilities
         # self.probs = ClassProbabilities(num_classes)
 
-    def update(self, x: torch.Tensor, y: torch.Tensor):
-        x = x.reshape(-1, self.num_classes)
-        y = y.flatten()
+    def update(self, out: torch.Tensor, batch: torch.Tensor):
+        x = out["logits"].reshape(-1, self.num_classes)
+        y = batch["labels"].flatten()
 
         self.common.update(x, y)
         self.roc.update(x, y)
