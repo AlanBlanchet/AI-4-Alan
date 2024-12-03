@@ -2,37 +2,56 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, ClassVar, Iterable
+from typing import Any, ClassVar, Iterable
 
-from ..configs import Color
+from pydantic import Field, field_validator
+
 from ..configs.base import Base
-from ..configs.main import MainConfig
+from ..configs.log import Color
 from ..modality import Image, Label
-
-if TYPE_CHECKING:
-    from ..task.classification.label_map import LabelMap
+from .label_map import LabelMap
 
 
-class BaseDataset(Base):
+class DatasetSplitConfig(Base):
+    name: str = "train"
+    size: float = 1.0
+
+
+class BaseDataset(Base, buildable=False):
     log_name: ClassVar[str] = "dataset"
     color: ClassVar[str] = Color.yellow
 
-    config: MainConfig
+    identification_name: ClassVar[str] = "source"
 
-    @property
-    def ds_config(self):
-        return self.config.dataset
+    params: dict = {}
+
+    train: DatasetSplitConfig = Field(None, validate_default=True)
+    val: DatasetSplitConfig = Field(None, validate_default=True)
+
+    @field_validator("train", mode="before")
+    @classmethod
+    def validate_train(cls, v):
+        if v is None:
+            v = {}
+        return DatasetSplitConfig(**v)
+
+    @field_validator("val", mode="before")
+    @classmethod
+    def validate_val(cls, v):
+        if v is None:
+            v = {}
+        return DatasetSplitConfig(**v)
 
     @property
     def name() -> str: ...
 
     @abstractmethod
-    def train(self) -> Iterable: ...
+    def create_train(self) -> Iterable: ...
 
-    def val(self) -> Iterable:
+    def create_val(self) -> Iterable:
         raise NotImplementedError
 
-    def test(self) -> Iterable:
+    def create_test(self) -> Iterable:
         raise NotImplementedError
 
     @cached_property
@@ -49,7 +68,7 @@ class BaseDataset(Base):
     @property
     def process_fields(self):
         # self.config.dataset.model_extra.keys()
-        params = self.config.dataset.map_params.copy()
+        params = self.map_params_config.copy()
         input_val = params.pop("input")
         # Create missing input value
         if isinstance(input_val, str):
@@ -62,7 +81,7 @@ class BaseDataset(Base):
         elif isinstance(input_val, list):
             raise NotImplementedError("Multiple inputs not supported yet")
         # Make all required fields have a default value
-        for required in self.config.task.required_fields:
+        for required in self.root_config.task.required_fields:
             if required not in params:
                 params[required] = required
         return params
@@ -106,6 +125,19 @@ class BaseDataset(Base):
         }
         return self.parse_items(item, name_mapping)
 
+    @property
+    def map_params_config(self):
+        _map = {"input": self.input, "id": "id"}
+        for k, v in self.model_extra.items():
+            if isinstance(v, str):
+                _map.update({k: v})
+            elif isinstance(v, dict):
+                # Can also be a dict with name (support for transforms or other linked to the type)
+                if "name" not in v:
+                    v["name"] = k  # Default
+                _map.update({k: v})
+        return _map
+
     def extract_inputs(self, item: dict) -> dict:
         """
         Extracts the input required for the model
@@ -125,4 +157,4 @@ class BaseDataset(Base):
         return inputs
 
     def example(self):
-        return next(iter(self.val()))
+        return next(iter(self.create_val()))

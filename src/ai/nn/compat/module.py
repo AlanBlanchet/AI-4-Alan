@@ -2,29 +2,178 @@ from __future__ import annotations
 
 import inspect
 from functools import cached_property
-from typing import Any, Callable, ClassVar, Mapping
+from inspect import isclass, signature
+from typing import Any, Callable, ClassVar, Mapping, dataclass_transform
 
 import numpy as np
 import torch
 import torch.nn as nn
+from pydantic._internal._model_construction import ModelMetaclass, NoInitField
+from pydantic.fields import Field as PydanticModelField
+from pydantic.fields import PrivateAttr as PydanticModelPrivateAttr
 
-from ...configs.base import ModuleConfig
-from ...configs.log import Color, Loggable
+from ...configs.base import Base
+from ...configs.log import Color
 from ..fusion.fuse import FusedModule
 
+BASE_MODULE_KEYS = dir(Base)
+BASE_MODULE_KEYS.remove("__repr__")
+NN_MODULE_KEYS = dir(nn.Module)
+NN_MODULE_KEYS.remove("forward")
 
-class Module(nn.Module, Loggable):
+NN_MODULE_ANNOTATIONS = set(nn.Module.__annotations__.keys())
+NN_MODULE_ANNOTATIONS.remove("forward")
+
+
+@dataclass_transform(
+    kw_only_default=True,
+    field_specifiers=(PydanticModelField, PydanticModelPrivateAttr, NoInitField),
+)
+class PydanticRemoveNNModuleForwardAnnotation(ModelMetaclass):
+    """
+    This class only serves to trick pydantic into not parsing the annotations in nn.Modules
+
+    Since the forward method isn't an attribute of nn.Module, we need to remove it from the annotations
+    because pydantic will parse the variable and interpret it as a field.
+
+    Same goes for every other nn.Modules in pytorch.
+    """
+
+    def __new__(
+        mcs,
+        cls_name: str,
+        bases: tuple[type[Any], ...],
+        namespace: dict[str, Any],
+        **kwargs: Any,
+    ):
+        # Remove forward from Pydantic's field parsing
+        for base in bases:
+            split = base.__module__.split(".")
+            package_name = split[0]
+            if package_name == "torch":
+                module_annotations = base.__dict__.get("__annotations__", {})
+                keys = set(module_annotations.keys())
+                # Remove everything concerning nn.Module and keep subclass specifics
+                keys -= NN_MODULE_ANNOTATIONS
+
+                sign = signature(base.__init__)
+                sign = dict(sign.parameters)
+                init_fn_params_list = list(sign.values())[1:]
+                init_fn_params = {p.name: p for p in init_fn_params_list}
+
+                if "forward" in keys:
+                    del module_annotations["forward"]
+                    keys.remove("forward")
+
+                for k in set(keys) & set(init_fn_params):
+                    param = init_fn_params[k]
+                    if param.default != param.empty:
+                        setattr(base, k, param.default)
+
+        return super().__new__(mcs, cls_name, bases, namespace, **kwargs)
+
+
+class Module(
+    Base, nn.Module, buildable=False, metaclass=PydanticRemoveNNModuleForwardAnnotation
+):
     """
     Base class for all models
     """
 
+    class Config:
+        arbitrary_types_allowed = True
+        extra = "allow"
+
+    identification_name = "type"
+
     log_name = "module"
     color: ClassVar[str] = Color.blue
-    config: ClassVar[ModuleConfig] = None
 
-    def __init__(self, config: ModuleConfig):
-        super().__init__()
-        self.config = config
+    def __init__(self, **kwargs):
+        # First initialize the nn.Module
+        nn.Module.__init__(self)
+        # Copy the current state (modules, buffers, parameters...)
+        original_nn_state = self.__dict__.copy()
+
+        # Initialize model
+        # This erases the state but we need it in the post_init !
+        # This is why we saved it in original_nn_state
+        super().__init__(**kwargs)
+        # Restore the state
+        self.__dict__.update(original_nn_state)
+        # Module.__setattr__ = original_setattr
+
+        attrs = self.__dict__.copy()
+        # Use the setattr method on nn.Module to use its logic
+        for k, v in attrs.items():
+            if isinstance(v, nn.Module):
+                nn.Module.__setattr__(self, k, v)
+
+        self.__dict__["__cached_properties__"] = {}
+        for k in dir(self.__class__):
+            v = getattr(self.__class__, k)
+            if isinstance(v, cached_property):
+                self.__cached_properties__[k] = v
+
+        self.init()
+
+    def init(self):
+        """
+        Initialize the model
+        """
+        for k, field in self.model_computed_fields.items():
+            unwrapped = field.wrapped_property.fget(self)
+            if k in NN_MODULE_KEYS or isinstance(unwrapped, nn.Module):
+                raise ValueError(
+                    f"Do not use any form of caching for Modules with pydantic. '{k}' is a Module",
+                    "Caching prevents nn.Module from accessing it's 'real' modules from _modules, _buffers and _parameters when changing device",
+                )
+
+    # def _apply(self, fn):
+    #     out = super()._apply(fn)
+    #     print(out)
+    #     # Handle computed or cached fields
+    #     for name, field in self.model_computed_fields.items():
+    #         value = field.wrapped_property.fget(
+    #             self
+    #         )  # Get the value of the computed property
+    #         if isinstance(value, nn.Module):
+    #             # Re-apply the function to submodules
+    #             value._apply(fn)
+    #             # Reset the field in the instance
+    #             self.__dict__[name] = value
+
+    #     for name, prop in self.__cached_properties__.items():
+    #         item = prop.func(self)
+    #         if isinstance(item, nn.Module):
+    #             item._apply(fn)
+
+    #     return out
+
+    def __repr__(self):
+        # Use nn.Module's __repr__ explicitly
+        return nn.Module.__repr__(self)
+
+    def __setattr__(self, name, value):
+        if name in NN_MODULE_KEYS or isinstance(value, nn.Module):
+            nn.Module.__setattr__(self, name, value)
+            # super().__setattr__(name, value)
+        else:
+            super().__setattr__(name, value)
+
+    def __getattribute__(self, name):
+        return super().__getattribute__(name)
+
+    def __getattr__(self, name):
+        try:
+            return nn.Module.__getattr__(self, name)
+        except AttributeError:
+            return super().__getattr__(name)
+
+    # Prevents training from being in the constructor
+    @property
+    def training(self):
+        return nn.Module.training
 
     @classmethod
     def log(cls, *msg: list[Any], table=False):
@@ -191,9 +340,29 @@ class Module(nn.Module, Loggable):
 
         return info  # Order should be filled
 
-    @cached_property
-    def memoized_forward_info(self):
-        """
-        Get the forward information
-        """
-        return self.forward_info(self, self.config.forward_args)
+    @classmethod
+    def create_classes(
+        cls, namespace: dict[str, Any], module: type, selected_names: list[str] = None
+    ):
+        if selected_names is None:
+            selected_names = [name for name in dir(module) if not name.startswith("__")]
+
+        for cls_name in selected_names:
+            module_cls = getattr(module, cls_name)
+            if isclass(module_cls):
+                namespace[cls_name] = type(cls_name, (cls, module_cls), {})
+                # Update the class's module to match the caller's module
+                namespace[cls_name].__module__ = namespace["__name__"]
+
+    # @cached_property
+    # def memoized_forward_info(self):
+    #     """
+    #     Get the forward information
+    #     """
+    #     return self.forward_info(self, self.forward_args)
+
+    def __hash__(self):
+        return id(self)
+
+
+Module.create_classes(globals(), nn.modules)

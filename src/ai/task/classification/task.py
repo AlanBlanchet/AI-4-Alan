@@ -6,14 +6,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from pydantic import computed_field
 
+from ...dataset.label_map import LabelMap
 from ..metrics import GroupedMetric
 from ..task import TASK_TYPE, Task
-from .label_map import LabelMap
 from .metrics import ClassificationMetrics
 
 
 class Classification(Task):
-    name: ClassVar[str] = "classification"
     alias: ClassVar[str] = "clf"
 
     @cached_property

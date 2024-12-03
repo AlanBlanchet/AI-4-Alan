@@ -5,34 +5,49 @@ import torch
 import torch.nn as nn
 from einops import rearrange
 
+from ..compat.module import Module
+from .conv import ConvBlock
+
 IMAGE_TYPE = Literal["rgb", "grayscale"]
 
 
-class Encoder(nn.Module):
-    def __init__(self, in_shape: int | np.ndarray, history=1):
-        super().__init__()
-        self.in_shape = in_shape
-        self.history = history
+class Encoder(Module):
+    in_shape: int | np.ndarray | tuple[int, ...]
+    history: int = 1
+    dims: list[int, int] = [16, 32]
+
+    def init(self):
+        super().init()
 
         layers = []
-        in_shape = list(in_shape)
+        in_shape = list(self.in_shape)
 
         if len(in_shape) == 3:
             layers.extend(
                 [
-                    nn.AdaptiveAvgPool2d((84, 84)),
-                    nn.Conv2d(in_shape[0] * history, 32, 8, 4),
-                    nn.ReLU(True),
-                    nn.Conv2d(32, 64, 4, 2),
-                    nn.BatchNorm2d(64),
-                    nn.ReLU(True),
-                    nn.Conv2d(64, 64, 3, 1),
-                    nn.BatchNorm2d(64),
-                    nn.ReLU(True),
+                    nn.AdaptiveAvgPool2d((84, 84)),  # (B, 4, 84, 84)
+                    ConvBlock(
+                        in_channels=in_shape[0] * self.history,
+                        out_channels=self.dims[0],
+                        kernel_size=8,
+                        stride=4,
+                    ),  # (B, 16, 20, 20)
+                    ConvBlock(
+                        in_channels=self.dims[0],
+                        out_channels=self.dims[1],
+                        kernel_size=4,
+                        stride=2,
+                    ),  # (B, 16, 9, 9)
+                    ConvBlock(
+                        in_channels=self.dims[1],
+                        out_channels=256,
+                        kernel_size=9,
+                        norm=None,
+                    ),
                     nn.Flatten(),
                 ]
             )
-            self.out = 3136
+
         else:
             layers.extend(
                 [
@@ -42,8 +57,8 @@ class Encoder(nn.Module):
                     nn.ReLU(True),
                 ]
             )
-            self.out = 128
 
+        self.out = 256
         self.encoder = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

@@ -5,6 +5,7 @@
 /runs
 lightning_logs
 neo.yml
+videos/
 
 ### Python ###
 # Byte-compiled / optimized / DLL files

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from typing import TYPE_CHECKING
 
 from pydantic import Field, field_validator
 
-from ..nn.compat.backbone import Backbone
 from .base import ModuleConfig
 from .pretrained import PretrainedConfig
 from .variants import VariantConfig
+
+if TYPE_CHECKING:
+    from ..nn.compat.backbone import Backbone
 
 
 class BackboneConfig(PretrainedConfig):

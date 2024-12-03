@@ -31,11 +31,11 @@ class AIModule(LightningModule):
 
     @property
     def config(self):
-        return self.task.config
+        return self.task.root_config
 
     @property
     def datamodule_config(self):
-        return self.config.run.datamodule
+        return self.config.run.datamodule.config
 
     def model_parameters(self):
         return self.model.parameters()
@@ -70,10 +70,10 @@ class AIModule(LightningModule):
         # Log the losses
         for k, v in losses.items():
             # Change the precision of the loss to be a fixed 6
-            v = torch.tensor(float(f"{v:.6f}"))
+            v /= self.datamodule_config.batch_size
             self.log(
                 f"{split}/{k}",
-                (v / self.datamodule_config.batch_size),
+                v,
                 prog_bar=split == "train",
             )
 
@@ -156,10 +156,12 @@ class AIModule(LightningModule):
     def set_random_example_idx(self):
         if self.task.train:
             self.random_train_idx = self.get_random_example_idx(
-                self.task.dataset.train()
+                self.task.dataset.create_train()
             )
 
-        self.random_val_idx = self.get_random_example_idx(self.task.dataset.val())
+        self.random_val_idx = self.get_random_example_idx(
+            self.task.dataset.create_val()
+        )
 
     @property
     def metric_val_only(self):

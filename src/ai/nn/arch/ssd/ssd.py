@@ -1,93 +1,96 @@
-import torch
-import torch.nn as nn
+# import torch
+# import torch.nn as nn
 
-from ....registry.registry import REGISTER
+# from ....registry.registry import REGISTER
 
-# from ....task.detection.detection import decode
-from ...compat.module import Module
-from ...modules.conv import ConvBlock
-from .config import SSDConfig
+# # from ....task.detection.detection import decode
+# from ...compat.module import Module
+# from ...modules.conv import ConvBlock
+# from .config import SSDConfig
 
 
-# TODO Revisit this
-@REGISTER
-class SSD(Module):
-    config: SSDConfig = SSDConfig
+class SSD: ...
 
-    def __init__(self, config: SSDConfig):
-        super().__init__(config)
-        raise NotImplementedError("SSD has changed a lot and requires to be udpated")
 
-        self.backbone = config.backbone.build()
+# # TODO Revisit this
+# @REGISTER
+# class SSD(Module):
+#     config: SSDConfig = SSDConfig
 
-        compat = getattr(backbone, "ssd_compat", None)
-        if not compat or not callable(compat):
-            raise AttributeError(
-                f"Backbone {backbone.__class__.__name__} is not SSD compatible"
-            )
+#     def __init__(self, config: SSDConfig):
+#         super().__init__(config)
+#         raise NotImplementedError("SSD has changed a lot and requires to be udpated")
 
-        # Backbone features
-        # TODO Adapt
-        ssd_compat = backbone.ssd_compat()
-        self.features = ssd_compat["features"]
-        extras = ssd_compat.get("extras", [])
-        # Convert ModuleList to Sequential
-        for i, extra in enumerate(extras):
-            if isinstance(extra, nn.ModuleList):
-                extras[i] = nn.Sequential(*extra)
+#         self.backbone = config.backbone.build()
 
-        default_channels = [512, 1024, 512, 256, 256, 256]
-        channels = ssd_compat.get("channels", default_channels)
+#         compat = getattr(backbone, "ssd_compat", None)
+#         if not compat or not callable(compat):
+#             raise AttributeError(
+#                 f"Backbone {backbone.__class__.__name__} is not SSD compatible"
+#             )
 
-        # Add default channels if not provided
-        if len(channels) != len(default_channels):
-            channels.extend(default_channels[len(channels) :])
+#         # Backbone features
+#         # TODO Adapt
+#         ssd_compat = backbone.ssd_compat()
+#         self.features = ssd_compat["features"]
+#         extras = ssd_compat.get("extras", [])
+#         # Convert ModuleList to Sequential
+#         for i, extra in enumerate(extras):
+#             if isinstance(extra, nn.ModuleList):
+#                 extras[i] = nn.Sequential(*extra)
 
-        self.num_defaults = [4, 6, 6, 6, 4, 4]
+#         default_channels = [512, 1024, 512, 256, 256, 256]
+#         channels = ssd_compat.get("channels", default_channels)
 
-        classifiers = []
-        for i, (default, oc) in enumerate(zip(self.num_defaults, channels)):
-            classifiers.append(nn.Conv2d(oc, default * (num_classes + 4), 1))
-        self.classifiers = nn.ModuleList(classifiers)
+#         # Add default channels if not provided
+#         if len(channels) != len(default_channels):
+#             channels.extend(default_channels[len(channels) :])
 
-        inter_channels = [1024, 256, 128, 128, 128]  # Conv 1x1 channels
-        for i, (in_channel, inter_channel, out_channel) in list(
-            enumerate(zip(channels[:-1], inter_channels, channels[1:]))
-        )[len(extras) :]:
-            p = 0 if i > 2 else 1 if i != 0 else 6
-            s = 2 if i < 3 else 1
-            # Dilation is 6 for the first layer with p=6
-            d = 6 if i == 0 else 1
-            norm = None if i == len(channels) - 2 else nn.BatchNorm2d
-            extras.append(
-                nn.Sequential(
-                    ConvBlock(in_channel, inter_channel, 1, padding=0),
-                    ConvBlock(
-                        inter_channel,
-                        out_channel,
-                        3,
-                        padding=p,
-                        stride=s,
-                        norm=norm,
-                        dilation=d,
-                    ),
-                )
-            )
-        self.extras = nn.ModuleList(extras)
+#         self.num_defaults = [4, 6, 6, 6, 4, 4]
 
-        self.feature_scaling = nn.Parameter(torch.ones(512) * 20)
+#         classifiers = []
+#         for i, (default, oc) in enumerate(zip(self.num_defaults, channels)):
+#             classifiers.append(nn.Conv2d(oc, default * (num_classes + 4), 1))
+#         self.classifiers = nn.ModuleList(classifiers)
 
-    def forward(self, x):
-        x = self.features(x)
+#         inter_channels = [1024, 256, 128, 128, 128]  # Conv 1x1 channels
+#         for i, (in_channel, inter_channel, out_channel) in list(
+#             enumerate(zip(channels[:-1], inter_channels, channels[1:]))
+#         )[len(extras) :]:
+#             p = 0 if i > 2 else 1 if i != 0 else 6
+#             s = 2 if i < 3 else 1
+#             # Dilation is 6 for the first layer with p=6
+#             d = 6 if i == 0 else 1
+#             norm = None if i == len(channels) - 2 else nn.BatchNorm2d
+#             extras.append(
+#                 nn.Sequential(
+#                     ConvBlock(in_channel, inter_channel, 1, padding=0),
+#                     ConvBlock(
+#                         inter_channel,
+#                         out_channel,
+#                         3,
+#                         padding=p,
+#                         stride=s,
+#                         norm=norm,
+#                         dilation=d,
+#                     ),
+#                 )
+#             )
+#         self.extras = nn.ModuleList(extras)
 
-        # Rescaling the features
-        # x = self.feature_scaling.view(1, -1, 1, 1) * F.normalize(x)
+#         self.feature_scaling = nn.Parameter(torch.ones(512) * 20)
 
-        boxes = [self.classifiers[0](x)]
-        for clf, extra in zip(self.classifiers[1:], self.extras):
-            x = extra(x)
-            boxes.append(clf(x))
+#     def forward(self, x):
+#         x = self.features(x)
 
-        conf, loc = decode(boxes, self.num_defaults, self.num_classes)
+#         # Rescaling the features
+#         # x = self.feature_scaling.view(1, -1, 1, 1) * F.normalize(x)
 
-        return dict(scores=conf, boxes=loc)
+#         boxes = [self.classifiers[0](x)]
+#         for clf, extra in zip(self.classifiers[1:], self.extras):
+#             x = extra(x)
+#             boxes.append(clf(x))
+
+#         conf, loc = decode(boxes, self.num_defaults, self.num_classes)
+
+#         return dict(scores=conf, boxes=loc)

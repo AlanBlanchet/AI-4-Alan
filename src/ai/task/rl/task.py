@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchmetrics
+from torchvision.utils import save_image
 
 from ...dataset.env.environment import EnvironmentDataset
 from ..metrics import GroupedMetric
@@ -20,16 +21,15 @@ class EmptyMetric(torchmetrics.Metric):
 
 
 class ReinforcementLearning(Task):
-    name: ClassVar[str] = "reinforcement learning"
     alias: ClassVar[str] = "rl"
 
     train_shuffle: bool = False
 
     dataset: EnvironmentDataset
 
-    @cached_property
-    def model_kwargs(self):
-        return dict(env=self.dataset)
+    @classmethod
+    def model_kwargs(cls, params):
+        return dict(env=params["dataset"])
 
     def default_loss(self, out: dict, batch: dict) -> dict:
         raise NotImplementedError
@@ -55,7 +55,14 @@ class ReinforcementLearning(Task):
 
         TODO Maybe show the state?
         """
-        ...
+        obs = item["obs"]
+        epoch = self.lightning_model.current_epoch
+
+        out_p = self.run_p / f"examples/{epoch}"
+        out_p.mkdir(exist_ok=True, parents=True)
+
+        for i, channel in enumerate(obs):
+            save_image(channel, out_p / f"channel_{i}.png")
 
     def process_output(
         self, model: nn.Module, batch: dict[str, torch.Tensor], split: str

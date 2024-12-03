@@ -42,7 +42,7 @@ class AIEnv:
             raise ValueError("Unsupported file type")
 
     @classmethod
-    def _recurrent_resolve_config(cls, config: Path) -> Path:
+    def _recurrent_resolve_config(cls, config: Path):
         c = cls.load(config)
         merge = c.pop("merge", None)
         if merge is not None:
@@ -61,7 +61,7 @@ class AIEnv:
     @classmethod
     def resolve_config(
         cls, config: Path, extra_params={}, default_run=run_configs_p / "default.yml"
-    ) -> Path:
+    ):
         c = cls._recurrent_resolve_config(config)
         if "run" not in c:
             # Add the run config
@@ -76,13 +76,27 @@ class AIEnv:
     @classmethod
     def parse_extra_args(cls, *args) -> dict:
         res = {}
+
+        grouped_args = []
+        param = False
         for arg in args:
+            if param:
+                grouped_args[-1] += f"={arg}"
+                param = False
+            else:
+                if arg.startswith("--") and "=" not in arg:
+                    param = True
+                grouped_args.append(arg)
+
+        for arg in grouped_args:
             unpacked = arg.split("=")
-            if len(unpacked) != 2:
+            if len(unpacked) < 2:
                 raise ValueError(
                     f"Manually specified arguments must be in the form 'key=value'. Got '{arg}'"
                 )
-            k, v = unpacked
+            k, *v = unpacked
+            k = k.strip("-")
+            v = "=".join(v)
             # try to convert to int or float
             try:
                 v = float(v)
