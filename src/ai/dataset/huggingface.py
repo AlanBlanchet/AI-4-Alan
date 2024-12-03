@@ -1,5 +1,5 @@
 from functools import cache, cached_property
-from typing import Callable, Type
+from typing import Any, Callable, Type
 
 import torch
 from datasets import (
@@ -11,13 +11,14 @@ from datasets import (
     load_dataset,
 )
 
-from ..configs.main import DatasetSplitConfig
-from ..task.classification.label_map import LabelMap
 from ..utils.env import AIEnv
-from .base_dataset import BaseDataset
+from .base_dataset import BaseDataset, DatasetSplitConfig
+from .label_map import LabelMap
 
 
 class HuggingFaceDataset(BaseDataset):
+    input: str | list[str] | dict[str, Any]
+
     @cached_property
     def name(self) -> str:
         return self.config.dataset.params["path"]
@@ -159,11 +160,11 @@ class HuggingFaceDataset(BaseDataset):
         )
 
     @cache
-    def train(self):
+    def get_train(self):
         return self.resolve_split(self.config.dataset.train, "train")
 
     @cache
-    def val(self):
+    def get_val(self):
         return self.resolve_split(self.config.dataset.val, "val")
 
     def _parse_item(self, item, key):
@@ -209,6 +210,3 @@ class HuggingFaceTorchDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         return self.item_process(self.dataset[idx])
-
-    class Config:
-        arbitrary_types_allowed = True

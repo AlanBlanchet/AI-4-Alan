@@ -2,7 +2,7 @@ from typing import ClassVar
 
 from pydantic import Field, field_validator
 
-from .base import ModuleConfig
+from .module import ModuleConfig
 
 
 class VariantConfig(ModuleConfig):

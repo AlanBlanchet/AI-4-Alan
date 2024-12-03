@@ -17,6 +17,7 @@ dependencies = [
     "click>=8.1.7",
     "datasets>=3.0.0",
     "deepmerge>=2.0",
+    "devtools>=0.12.2",
     "diffusers>=0.31.0",
     "easydict>=1.13",
     "einops>=0.8.0",
@@ -46,9 +47,12 @@ dependencies = [
 
 [tool.ruff.lint.per-file-ignores]
 "*.ipynb" = ["E402"]
+"**/__init__.py" = ["F401", "F403"]
 
 [tool.ruff]
 exclude = ["*.ipynb"]
+
+[tool.ruff.per-file-ignores]
 
 
 [tool.setuptools]

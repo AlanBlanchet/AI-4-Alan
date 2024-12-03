@@ -11,11 +11,11 @@
       "cwd": "${workspaceFolder}",
       "request": "launch",
       "module": "ai.cli.debug",
-      "args": ["train", "configs/agents/dqn.yml"],
+      "args": ["val", "configs/agents/dqn.yml"],
       "pythonArgs": ["-Xfrozen_modules=off"],
       "env": {
-        "CUDA_VISIBLE_DEVICES": "0",
-        "PYDEVD_DISABLE_FILE_VALIDATION": "1"
+        "CUDA_VISIBLE_DEVICES": "0"
+        // "PYDEVD_DISABLE_FILE_VALIDATION": "1"
       },
       "console": "integratedTerminal"
     },

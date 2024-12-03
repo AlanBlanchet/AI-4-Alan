@@ -16,9 +16,7 @@ class ResNet(Backbone):
     def __init__(self, config: ResNetConfig):
         super().__init__(config)
 
-        self.conv1 = ConvBlock(
-            config.in_channels, 64, kernel_size=7, stride=2, padding=3
-        )
+        self.conv1 = ConvBlock(self.in_channels, 64, kernel_size=7, stride=2, padding=3)
 
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
 
@@ -98,26 +96,21 @@ class ResNet(Backbone):
         return self.head(feats[-1])
 
 
-# @REGISTER
-# class ResNet18(ResNet):
-#     variant = "18"
+class ResNet18(ResNet):
+    variant = "18"
 
 
-# @REGISTER
-# class ResNet34(ResNet):
-#     variant = "34"
+class ResNet34(ResNet):
+    variant = "34"
 
 
-# @REGISTER
-# class ResNet50(ResNet):
-#     variant = "50"
+class ResNet50(ResNet):
+    variant = "50"
 
 
-# @REGISTER
-# class ResNet101(ResNet):
-#     variant = "101"
+class ResNet101(ResNet):
+    variant = "101"
 
 
-# @REGISTER
-# class ResNet152(ResNet):
-#     variant = "152"
+class ResNet152(ResNet):
+    variant = "152"

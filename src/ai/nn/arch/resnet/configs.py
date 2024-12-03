@@ -1,10 +1,8 @@
 from pydantic import BaseModel, Field, field_validator
 
-from ....configs import (
-    BackboneConfig,
-    ClassificationConfig,
-    PretrainedConfig,
-)
+from ....task.task import ClassificationConfig
+from ...compat.backbone import BackboneConfig
+from ...compat.pretrained import PretrainedConfig
 
 _configs = {
     "18": [

@@ -1,6 +1,6 @@
 from abc import abstractmethod
 from functools import cache
-from typing import Any, ClassVar
+from typing import ClassVar
 
 import torch
 
@@ -11,10 +11,6 @@ from ..configs.log import Color
 class Modality(Base):
     log_name: ClassVar[str] = "modality"
     color: ClassVar[str] = Color.red
-
-    @classmethod
-    def log(cls, *msg: list[Any], table=False):
-        super().log(f"[{cls.__name__}]", *msg, table=table)
 
     @staticmethod
     @abstractmethod

@@ -1,21 +1,16 @@
 merge: datasets/env/breakout.yml
-
 dataset:
-  params:
-    steps: 2000
+  steps: 50
 task:
-  type: reinforcementlearning
+  type: rl
   model:
     type: DQN
-# dataset:
-#   input:
-#     name: image
-#     other: image_mask
-#   image:
-#     preprocess: None
+    interactions_per_learn: 2
+  datamodule:
+    num_workers: 2
+    batch_size: 32
 run:
   action: train
-  # lightning:
-  #   check_dataloader_collate_fn: False
-  datamodule:
-    num_workers: 0
+  lightning:
+    max_epochs: 1000
+  checkpoint: runs/rl/ALE_Breakout-v5/DQN/2/lightning_logs/version_0/checkpoints/epoch=999-step=1000000.ckpt

@@ -1,97 +1,73 @@
 from copy import deepcopy
+from typing import override
 
 import torch
 import torch.nn.functional as F
 
-from ....registry.registry import REGISTER
 from ...compat.agent import Agent
-from .config import DQNConfig
 from .policy import DQNPolicy
 
 
-@REGISTER
 class DQN(Agent):
-    config: DQNConfig = DQNConfig
+    # Double DQN
+    update_target: int = 0
+    """DDQN update target step frequency update"""
+    tau: float = 0.995
+    """DDQN soft update ratio to the target network"""
+    ddqn_tuned: bool = False
+    """DDQN tuned version with shared action layer"""
+    # DRQN
+    recurrent: bool = False
+    """DQN with LSTM"""
+    lstm_hidden_dim: int = 16
+    """LSTMs hidden dimension"""
+    # Dual DQN
+    dual: bool = False
+    """DQN with two Q networks"""
+    # PER
+    per: bool = False
+    """Prioritized Experience Replay"""
 
-    def __init__(
-        self,
-        config: DQNConfig,
-        # env: Environment,
-        # optimizer: Literal["Adam", "RMSprop", "AdamW"] = "RMSProp",
-        # lr: float = 1e-3,
-        # gamma=0.99,
-        # epsilon: HYPERPARAM = Hyperparam(0.9, 0.1),
-        # batch_size=32,
-        # history=4,
-        # prepare_episodes=4,
-        # reward_shaping=True,
-        # interactions_per_learn=1,
-        # # Double DQN
-        # target=0,
-        # tau=0.995,
-        # # DRQN
-        # recurrent=False,
-        # # Dual DQN
-        # duel=False,
-        # # PER
-        # per=False,
-        **kwargs,
-    ):
-        self.prepare_episodes = config.prepare_episodes
-        # DRQN means history is in the form of an embedding in the last hidden_state
-        self.hidden_dim = 16
+    _train_steps = 0
+    _network_syncs = 0
 
-        self._train_steps = 0
-        self._network_syncs = 0
+    def init(self):
+        super().init()
 
-        # Call parent
-        super().__init__(config, **kwargs)
-
-        if config.target != 0:
-            self.trained_policy = deepcopy(self.policy)
-        else:
-            self.trained_policy = self.policy
-
-        # if config.optimizer == "Adam":
-        #     self._optim = optim.Adam(self.trained_policy.parameters(), lr=config.lr)
-        # elif config.optimizer == "AdamW":
-        #     self._optim = optim.AdamW(self.trained_policy.parameters(), lr=config.lr)
-        # elif config.optimizer == "RMSProp":
-        #     self._optim = optim.RMSprop(self.trained_policy.parameters(), lr=config.lr)
-
-        self.update_target = config.target
-
-        if config.recurrent:
-            # Delayed elements just like obs -> next_obs
-            self.setup_delayed(
-                {"h1": "h0", "c1": "c0"}, [(config.hidden_dim,), (config.hidden_dim,)]
+        if self.update_target != 0:
+            self.info(
+                f"Using Double DQN with updates every {self.update_target} steps and tau={self.tau}"
             )
+            self.online_policy = deepcopy(self.policy)
 
-        # self.register_state(
-        #     [
-        #         "_train_steps",
-        #         "_network_syncs",
-        #         "gamma",
-        #         "update_target",
-        #         "tau",
-        #         "batch_size",
-        #         "prepare_episodes",
-        #         "per",
-        #     ]
-        # )
+            if self.ddqn_tuned:
+                self.info("Using the tuned version of Double DQN (shared action layer)")
+                self.online_policy.l1 = self.policy.l1
+        else:
+            self.online_policy = self.policy
 
-    def build_policy(self):
-        policy = DQNPolicy(
-            self.env.preprocessed_shape,
-            self.env.out_action,
-            history=self.config.history,
-            last_layer="linear" if not self.config.recurrent else "lstm",
-            duel=self.config.duel,
-            hidden_dim=self.hidden_dim,
+        if self.recurrent:
+            self.info(f"Using DRQN with hidden_dim={self.lstm_hidden_dim}")
+
+        # if self.recurrent:
+        #     # Delayed elements just like obs -> next_obs
+        #     self.setup_delayed(
+        #         {"h1": "h0", "c1": "c0"}, [(self.hidden_dim,), (self.hidden_dim,)]
+        #     )
+
+    def setup_policy(self):
+        return DQNPolicy(
+            in_shape=self.active_env.preprocessed_shape,
+            out_dim=self.active_env.out_action,
+            history=self.history,
+            last_layer="linear" if not self.recurrent else "lstm",
+            dual=self.dual,
+            hidden_dim=self.lstm_hidden_dim,
         )
-        policy.train()
-        policy = policy.requires_grad_(True)
-        return policy
+
+    @property
+    def target_policy(self):
+        return self.policy
 
     def learn(self, batch: dict):
         # state = self.sample(
@@ -100,11 +76,11 @@ class DQN(Agent):
         #     priority="p" if self.config.per else None,
         # )
 
-        # obs, actions, rewards, next_obs, dones, idx = state.get_defaults("idx")
-        obs, actions, rewards, dones, _, next_obs, _ = tuple(batch.values())
+        obs, actions, rewards, dones, _, next_obs, *_ = tuple(batch.values())
 
-        h0, c0, h1, c1 = None, None, None, None
-        # if self.config.recurrent:
+        hx0, hx1 = None, None
+        # h0, c0, h1, c1 = None, None, None, None
+        # if self.recurrent:
         #     # (B, ...)
         #     h0, c0, h1, c1 = state[["h0", "c0", "h1", "c1"]]
         #     h0 = h0[..., 0, :].unsqueeze(dim=0).detach()
@@ -119,7 +95,7 @@ class DQN(Agent):
         # idx = idx[..., -1]
 
         # Reward shaping
-        if self.config.reward_shaping:
+        if self.reward_shaping:
             rewards = torch.where(rewards > 0, 1, rewards)
             rewards = torch.where(rewards < 0, -1, rewards)
 
@@ -127,16 +103,14 @@ class DQN(Agent):
         chosen_actions = actions.argmax(dim=-1)
 
         # Calculate Q values for state / next state
-        Q, h0, c0 = self.trained_policy(obs, h=h0, c=c0)
+        Q, hx0 = self.online_policy(obs, hx=hx0)
         Q = Q.gather(1, chosen_actions.unsqueeze(dim=-1)).squeeze(dim=-1)
 
         # The next rewards are not learnable, they are our targets
         with torch.no_grad():
-            Q_next, h1, c1 = self.policy(next_obs, h=h1, c=c1)
+            Q_next, hx1 = self.target_policy(next_obs, hx1)
             # Long term reward function
-            expected_Q = rewards + self.config.gamma * Q_next.max(dim=-1).values * (
-                1 - dones
-            )
+            expected_Q = rewards + self.gamma * Q_next.max(dim=-1).values * (1 - dones)
 
         return dict(
             Q=Q,
@@ -144,17 +118,13 @@ class DQN(Agent):
             reward=rewards,
             chosen_actions=chosen_actions,
             epsilon=float(self.epsilon),
-            memory=len(self.memory),
-            # idx=idx,
+            **self.env_info(),
         )
 
     def compute_loss(self, out: dict, batch: dict) -> dict:
-        # Q, expected_Q, idx = out["Q"], out["expected_Q"], out["idx"]
         Q, expected_Q = out["Q"], out["expected_Q"]
 
-        loss = F.smooth_l1_loss(
-            Q, expected_Q, reduction="none" if self.config.per else "mean"
-        )
+        loss = F.smooth_l1_loss(Q, expected_Q, reduction="none" if self.per else "mean")
 
         # if self.config.per:
         #     self.memorize({"idx": idx, "p": loss.abs().cpu() + 1e-6})
@@ -168,19 +138,47 @@ class DQN(Agent):
         # Prevents network to follow a moving target
         if self.update_target and self._train_steps >= self.update_target:
             # We do a soft update to prevent sudden changes
-            state_dict = self.policy.state_dict()
-            train_state_dict = self.trained_policy.state_dict()
-            for key in state_dict.keys():
-                train_state_dict[key] = (
-                    self.config.tau * state_dict[key]
-                    + (1 - self.config.tau) * train_state_dict[key]
+            train_state_dict = self.online_policy.state_dict()
+            target_state_dict = self.target_policy.state_dict()
+            for key in target_state_dict.keys():
+                target_state_dict[key] = (
+                    self.tau * train_state_dict[key]
+                    + (1 - self.tau) * target_state_dict[key]
                 )
-            self.policy.load_state_dict(train_state_dict)
+            self.target_policy.load_state_dict(target_state_dict)
             self._train_steps = 0
             self._network_syncs += 1
 
-        return {
-            "loss": loss,
-            "expected_Q": expected_Q.mean(),
-            "Q": Q.mean(),
-        }
+        return dict(
+            loss=loss,
+            expected_Q=expected_Q.mean(),
+            Q=Q.mean(),
+        )
+
+
+class DRQN(DQN):
+    recurrent: bool = True
+
+    @override
+    def setup_policy(self):
+        return DQNPolicy(
+            in_shape=self.active_env.preprocessed_shape,
+            out_dim=self.active_env.out_action,
+            history=self.history,
+            last_layer="linear" if not self.recurrent else "lstm",
+            duel=self.duel,
+            hidden_dim=self.lstm_hidden_dim,
+            dims=[32, 64],
+        )
+
+
+class DQNHardUpdate(DQN, buildable=False):
+    tau: float = 1.0
+
+
+class DDQN(DQNHardUpdate):
+    update_target: int = 10_000
+
+
+class DualDQN(DQNHardUpdate):
+    dual: bool = True

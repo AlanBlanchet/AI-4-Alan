@@ -16,6 +16,10 @@ from pydantic import BaseModel
 
 
 class TorchDataset(BaseModel):
+    model_config = {
+        "arbitrary_types_allowed": True,
+    }
+
     dataset: Any
     transforms: Compose = Compose(
         [
@@ -90,6 +94,3 @@ class TorchDataset(BaseModel):
         )
 
         return item
-
-    class Config:
-        arbitrary_types_allowed = True

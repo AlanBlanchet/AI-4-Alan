@@ -1,88 +1,53 @@
 from __future__ import annotations
 
+import json
+import shutil
 from abc import abstractmethod
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Literal
+from typing import ClassVar, Literal, override
 
+import numpy as np
 import torch
-import torch.nn as nn
+import yaml
+from lightning import LightningModule
+from pydantic import computed_field, field_validator
 
-from ..configs.base import Base
-from ..configs.log import Color
-from ..configs.main import ActionEnum, MainConfig
-from ..dataset.base_dataset import BaseDataset
-from ..dataset.collator.mask import masked_collator
-from ..dataset.env.environment import EnvironmentDataset
-from ..dataset.huggingface import HuggingFaceDataset
-from ..nn.compat.pretrained import Pretrained
-from ..train.model import AIModule
+from ..configs import ActionEnum, Color
+from ..nn import *  # noqa
+from ..nn.compat.module import ModuleConfig
+from ..nn.compat.pretrained import PretrainedConfig
 from ..utils.env import AIEnv
+from .metrics import GroupedMetric, Metric
+from .trainer import TaskModule
 
 TASK_TYPE = Literal["binary", "multiclass", "multilabel"]
 
-if TYPE_CHECKING:
-    pass
+
+class EmptyMetric(Metric):
+    def update(self, *args, **kwargs): ...
+
+    def compute(self, **kwargs):
+        return {}
 
 
-class Task(Base):
+class Task(TaskModule, buildable=False):
     log_name: ClassVar[str] = "task"
     color: ClassVar[str] = Color.magenta
+    alias: ClassVar[str]
 
-    config: MainConfig
-    dataset: BaseDataset
+    metrics: GroupedMetric = GroupedMetric(
+        lambda: EmptyMetric(),
+        ["train", "val"],
+    )
+    checkpoint: Path = None
 
-    train_shuffle: bool = True
+    val_only_metrics: bool = False
 
-    def model_post_init(self, _):
-        self.log(f"Loading {self.name} task")
-        self.setup_dataset()
-
-    @property
-    def model_kwargs(self): ...
-
-    @cached_property
-    def model(self):
-        self.log("Setting up model")
-        config = {
-            **self.config.task.model.model_dump(),
-            **self.model_kwargs,
-            "train": self.train,
-        }
-        ex = self.dataset.example()
-        items = masked_collator([ex])
-        input = self.dataset.extract_inputs(items)
-
-        model: nn.Module = Base.from_config(config)
-
-        if isinstance(model, Pretrained):
-            model.init_weights(*input)
-
-        return model
-
-    @property
-    def lightning_model(self):
-        module = AIModule(self)
-        torch.compile(module)
-        return module
-
-    @property
-    def metric_params(self):
-        return self.params.get("metrics", {})
-
-    @property
-    def val_only_metrics(self):
-        return self.config.task.val_only_metrics
-
-    @property
-    def train(self):
-        return self.config.run.action == ActionEnum.fit
-
-    def modules(self, **kwargs) -> dict[str, nn.Module]:
-        return dict(metrics=self.metrics, **kwargs)
-
-    @abstractmethod
-    def setup_dataset(self, **kwargs): ...
+    @override
+    @classmethod
+    def get_identifiers(cls):
+        return super().get_identifiers() | {cls.alias}
 
     @classmethod
     def all_names(self):
@@ -94,6 +59,78 @@ class Task(Base):
             if task.is_valid(field, dtype):
                 yield task
 
+    @classmethod
+    def model_kwargs(cls, params: dict): ...
+
+    @classmethod
+    def datamodule_kwargs(cls, params: dict): ...
+
+    @computed_field()
+    @property
+    def name(self) -> str:
+        return self.__class__.__name__
+
+    @property
+    def metric_params(self):
+        return self.params.get("metrics", {})
+
+    @property
+    def task_action(self):
+        return self.root_config.run.action == ActionEnum.fit
+
+    # TODO: fix this to be on each subclass
+    @property
+    def required_fields(self):
+        if self.type == "classification":
+            return ["labels"]
+        elif self.type == "detection":
+            return ["labels", "bbox"]
+        else:
+            raise ValueError(f"Unknown task type {self.type}")
+
+    @cached_property
+    def run_p(self):
+        run_p = (
+            AIEnv.runs_p
+            / self.alias
+            / self.dataset.name.replace("/", "_")
+            / self.model.__class__.__name__
+        )
+        run_p = self._create_path(run_p)
+        run_p.mkdir(exist_ok=True, parents=True)
+        self.info(f"Setting run path to {run_p}")
+        return run_p
+
+    def init(self):
+        super().init()
+        # Move the logs to the run path
+        shutil.move(AIEnv.tmp_log_p, self.run_p / "log")
+        # Load the dataset
+        self.info(f"Loading {self.spaced_name()} task")
+        self.setup_dataset()
+
+    @abstractmethod
+    def setup_dataset(self, **kwargs): ...
+
+    @abstractmethod
+    def default_loss(self, out: dict, batch: dict) -> dict: ...
+
+    @abstractmethod
+    def example(self, pred: dict, item: dict, split: str): ...
+
+    def save_config(self):
+        config = self.run_p / "config.yml"
+        dump_config = self.run_p / "dump.yml"
+        config.write_text(yaml.dump(self.root_config.config, sort_keys=False))
+        obj = self.root_config.model_dump(exclude={"config"})
+        try:
+            dump_config.write_text(yaml.dump(obj, sort_keys=False))
+        except Exception as e:
+            self.error(f"Error saving dump config:\n{e}\nTrying to save as json")
+            dump_config.with_suffix(".json").write_text(json.dumps(obj, indent=2))
+
+        self.info(f"Saved configs to \nconfig {config}\ndump {dump_config}")
+
     def _create_path(self, path: Path):
         i = 1
         p = path / f"{i}"
@@ -102,28 +139,17 @@ class Task(Base):
             p = path / f"{i}"
         return p
 
-    @cached_property
-    def run_p(self):
-        run_p = AIEnv.runs_p / self.alias / self.dataset.name.replace("/", "_")
-        run_p = self._create_path(run_p)
-        run_p.mkdir(exist_ok=True, parents=True)
-        self.log(f"Setting run path to {run_p}")
-        return run_p
-
     def map_params(self, item: dict) -> dict:
-        dataset_conf = self.config.dataset
+        dataset_conf = self.root_config.dataset
         map = dataset_conf.map_params
         return self.dataset.parse_items(item, map)
-
-    @abstractmethod
-    def default_loss(self, out: dict, batch: dict) -> dict: ...
 
     def wrap_output(self, out: dict):
         return out
 
     def process(
         self,
-        model: AIModule,
+        model: LightningModule,
         batch: dict[str, torch.Tensor],
         split: str,
         item_idx: int | None,
@@ -158,54 +184,48 @@ class Task(Base):
 
         # Show chosen sample
         if item_idx is not None:
-            try:
-                self.example(
-                    self._extract_batch_item(out, item_idx),
-                    self._extract_batch_item(batch, item_idx),
-                    split,
-                )
-            except Exception as e:
-                self.log(f"Error showing example: {e}")
+            self.example(
+                self._extract_batch_item(out, item_idx),
+                self._extract_batch_item(batch, item_idx),
+                split,
+            )
+        # try:
+        # except Exception as e:
+        #     self.info(f"Error showing example: {e}")
 
         # Return the losses
         return losses
 
-    @abstractmethod
-    def example(self, pred: dict, item: dict, split: str): ...
-
     def _extract_batch_item(self, batch: dict, idx: int) -> dict:
-        return {k: v[idx] for k, v in batch.items()}
+        out = {}
+        for k, v in batch.items():
+            if isinstance(v, (list, torch.Tensor, np.ndarray)):
+                out[k] = v[idx]
+            else:
+                out[k] = v
+        return out
 
+
+class DimensionConfig(ModuleConfig):
+    num_channels: int
+    fixed_size: list[int] = None
+
+    @field_validator("fixed_size", mode="before")
     @classmethod
-    def run(cls, config: MainConfig):
-        # Prevent circular imports
-        from ..train.runner import Runner
-        from .classification.task import Classification
-        from .detection.task import Detection
-        from .rl.task import ReinforcementLearning
+    def validate_fixed_size(cls, value):
+        if isinstance(value, int):
+            return [value, value]
+        if value is None and issubclass(cls, PretrainedConfig):
+            return cls.pretrained[0].weights.fixed_size
+        return value
 
-        # Init dataset
-        dataset: BaseDataset = None
-        source = config.dataset.source
-        if source == "hf":
-            dataset = HuggingFaceDataset(config=config)
-        elif source == "gym":
-            dataset = EnvironmentDataset(config=config)
-        else:
-            raise NotImplementedError(
-                f"Dataset source {config.dataset.source} not implemented"
-            )
 
-        task: Task = None
-        type = config.task.type
-        if type == "classification":
-            task = Classification(config=config, dataset=dataset)
-        elif type == "detection":
-            task = Detection(config=config, dataset=dataset)
-        elif type == "reinforcementlearning":
-            task = ReinforcementLearning(config=config, dataset=dataset)
-        else:
-            raise NotImplementedError(f"Task type {config.task.type} not implemented")
+class ClassificationConfig(ModuleConfig):
+    num_classes: int = None
 
-        runner = Runner(task=task, config=config)
-        runner()
+    @field_validator("num_classes", mode="before")
+    @classmethod
+    def validate_num_classes(cls, value):
+        if value is None and issubclass(cls, PretrainedConfig):
+            return cls.pretrained_recommendations[0].weights.num_classes
+        return value

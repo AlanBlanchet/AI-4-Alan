@@ -14,7 +14,8 @@ class RLMetric(torchmetrics.Metric):
 
     def update(self, preds, batch: dict[str, torch.Tensor]):
         for key in self.keys:
-            self.means[key].update(preds[key])
+            if key in preds:
+                self.means[key].update(preds[key])
 
     def reset(self):
         self.means.reset()

@@ -8,7 +8,6 @@ from .metrics import DetectionMetrics
 
 
 class Detection(Classification):
-    name: ClassVar[str] = "detection"
     alias: ClassVar[str] = "det"
 
     @cached_property
@@ -47,4 +46,4 @@ class Detection(Classification):
 
     def postprocess(self, out: dict, batch) -> dict:
         # Postprocess the output
-        return self.model.postprocess(out, batch)
+        return self.module.postprocess(out, batch)

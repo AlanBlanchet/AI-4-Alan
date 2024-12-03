@@ -14,6 +14,8 @@ from ..configs.base import Base
 
 
 class AILogger(Logger, Base):
+    model_config = {"arbitrary_types_allowed": True}
+
     log_name: ClassVar[str] = "ai-logger"
 
     all_loggers: dict = {}
@@ -93,6 +95,3 @@ class AILogger(Logger, Base):
 
     def __getitem__(self, idx: int) -> Self:
         return list(self._loggers.values())[idx]
-
-    class Config:
-        arbitrary_types_allowed = True

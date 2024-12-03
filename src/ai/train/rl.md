@@ -95,7 +95,7 @@ $$ Q(s_{t}, a_{t}) + \alpha(r_{t+1} + \gamma TD_{max}) $$
 
 ### Model-free / Model-based
 
-Some experiences can be played with the agent having access to some extra post-states rather than just having a reward and having to work out how to maximise that reward.
+Some transitions can be played with the agent having access to some extra post-states rather than just having a reward and having to work out how to maximise that reward.
 
 In model-based, the agent get directly access to some environment states (ex: distance from objective, score, target).
 

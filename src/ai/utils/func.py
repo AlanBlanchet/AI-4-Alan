@@ -4,6 +4,7 @@ from typing import Callable, Generator
 
 import numpy as np
 import torch
+from pydantic import BaseModel, field_validator
 from random_word import RandomWords
 
 
@@ -56,3 +57,25 @@ def parse_tensor(data, device: torch.device = "cpu", dtype=torch.float32):
 def keep_kwargs_prefixed(kwargs: dict, prefix: str) -> dict:
     x = {k.removeprefix(prefix): v for k, v in kwargs.items() if k.startswith(prefix)}
     return x
+
+
+class TensorInfo(BaseModel):
+    model_config = {"arbitrary_types_allowed": True}
+
+    shape: tuple[int, ...] = ()
+    dtype: torch.dtype = torch.float32
+
+    @field_validator("shape", mode="before")
+    @classmethod
+    def validate_shape(cls, v):
+        if isinstance(v, (int, np.integer)):
+            return (int(v),)
+        return tuple(v)
+
+
+class classproperty:
+    def __init__(self, func):
+        self.fget = func
+
+    def __get__(self, instance, owner):
+        return self.fget(owner)

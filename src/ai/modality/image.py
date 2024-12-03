@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import torchvision.transforms.functional as T
 from albumentations import (
     BboxParams,
     Compose,
@@ -15,13 +16,28 @@ from PIL import Image as PImage
 from pydantic import field_validator
 from torchvision.utils import draw_bounding_boxes
 
+from ..configs.base import Base
 from ..utils.augmentations import AUGS
 from .modality import Modality
 
 
+class ImageAugmentation(Base, buildable=False):
+    def __call__(self, *args, **kwargs):
+        print(args, kwargs)
+
+
 class Image(Modality):
-    image: dict
+    resize: int | tuple[int, int] = None
+
+    augmentations: list[ImageAugmentation] = {}
+
+    image: dict = {}
     bbox: dict = None
+
+    @field_validator("augmentations", mode="before")
+    @classmethod
+    def validate_augmentations(cls, value):
+        return ImageAugmentation.from_config(value)
 
     @field_validator("image", mode="before")
     def validate_image(cls, value):
@@ -38,7 +54,7 @@ class Image(Modality):
     @cached_property
     def format(self):
         format = self.bbox.get("format", "pascal_voc")
-        self.log(f"Using bbox format: {format}")
+        self.info(f"Using bbox format: {format}")
         return format
 
     @cached_property
@@ -288,3 +304,12 @@ class Image(Modality):
             out = cls.mask_collate(name, samples)
 
         return out
+
+
+class CenterCrop(ImageAugmentation):
+    size: int | tuple[int, int]
+
+    def __call__(self, *args, **kwargs):
+        img = kwargs["image"]
+        kwargs["image"] = T.center_crop(img, self.size)
+        return kwargs

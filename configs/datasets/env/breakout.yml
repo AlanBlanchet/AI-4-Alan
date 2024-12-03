@@ -2,20 +2,12 @@ dataset:
   source: gym
   params:
     name: ALE/Breakout-v5
-    max_steps: 200
-    # input:
-    #   name: image
-    #   other: image_mask
-    # image:
-    #   preprocess: None
-    # params:
-    #   path: detection-datasets/coco
+    max_steps: 300
+  skips: 4
   input: obs
-  # labels: objects.category
-  # bbox:
-  #   name: objects.bbox
-  #   format: pascal_voc
-  # train:
-  #   name: train
-  # val:
-  #   name: val
+  # modalities:
+  #   - type: image
+  #     resize: 84
+  #     augmentations:
+  #       - type: CenterCrop
+  #         size: 84

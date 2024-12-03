@@ -14,7 +14,6 @@ class DQNConfig(BaseModel):
     epsilon: HYPERPARAM = Hyperparam(start=0.9, end=0.1)
     batch_size: int = 32
     history: int = 4
-    prepare_episodes: int = 4
     reward_shaping: bool = True
     interactions_per_learn: int = 1
     # Double DQN

@@ -1,0 +1,5 @@
+merge: dqn.yml
+task:
+  model:
+    type: DDQN
+    interactions_per_learn: 4

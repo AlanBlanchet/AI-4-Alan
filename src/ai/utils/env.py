@@ -1,4 +1,7 @@
+import logging
 import os
+import tempfile
+import warnings
 from functools import cache
 from pathlib import Path
 
@@ -24,6 +27,8 @@ class AIEnv:
 
     run_configs_p = configs_p / "run"
 
+    tmp_log_p = Path(tempfile.gettempdir()) / "tmp_log"
+
     @classmethod
     @cache
     def path2module(cls, path: Path) -> str:
@@ -42,7 +47,7 @@ class AIEnv:
             raise ValueError("Unsupported file type")
 
     @classmethod
-    def _recurrent_resolve_config(cls, config: Path) -> Path:
+    def _recurrent_resolve_config(cls, config: Path):
         c = cls.load(config)
         merge = c.pop("merge", None)
         if merge is not None:
@@ -61,7 +66,7 @@ class AIEnv:
     @classmethod
     def resolve_config(
         cls, config: Path, extra_params={}, default_run=run_configs_p / "default.yml"
-    ) -> Path:
+    ):
         c = cls._recurrent_resolve_config(config)
         if "run" not in c:
             # Add the run config
@@ -76,13 +81,27 @@ class AIEnv:
     @classmethod
     def parse_extra_args(cls, *args) -> dict:
         res = {}
+
+        grouped_args = []
+        param = False
         for arg in args:
+            if param:
+                grouped_args[-1] += f"={arg}"
+                param = False
+            else:
+                if arg.startswith("--") and "=" not in arg:
+                    param = True
+                grouped_args.append(arg)
+
+        for arg in grouped_args:
             unpacked = arg.split("=")
-            if len(unpacked) != 2:
+            if len(unpacked) < 2:
                 raise ValueError(
                     f"Manually specified arguments must be in the form 'key=value'. Got '{arg}'"
                 )
-            k, v = unpacked
+            k, *v = unpacked
+            k = k.strip("-")
+            v = "=".join(v)
             # try to convert to int or float
             try:
                 v = float(v)
@@ -102,3 +121,31 @@ class AIEnv:
 
 AIEnv.cache_p.mkdir(exist_ok=True, parents=True)
 AIEnv.runs_p.mkdir(exist_ok=True, parents=True)
+AIEnv.tmp_log_p.mkdir(exist_ok=True, parents=True)
+
+warn_file_p = AIEnv.tmp_log_p / "user_future_warns.txt"
+
+
+# Step 1: Set up a dedicated logger for specific warnings
+warnings_logger = logging.getLogger("warnings_logger")
+warnings_logger.setLevel(logging.WARNING)
+
+# Create a file handler to log warnings to the specified file
+file_handler = logging.FileHandler(warn_file_p)
+file_handler.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
+warnings_logger.addHandler(file_handler)
+
+# Step 2: Save the original showwarning function
+original_showwarning = warnings.showwarning
+
+
+# Step 3: Define a custom showwarning function
+def custom_showwarning(message, category, filename, lineno, file=None, line=None):
+    if issubclass(category, (UserWarning, FutureWarning)):
+        warnings_logger.warning(f"{category.__name__}: {message} ({filename}:{lineno})")
+    else:
+        original_showwarning(message, category, filename, lineno, file, line)
+
+
+# Step 4: Override the warnings.showwarning with the custom function
+warnings.showwarning = custom_showwarning

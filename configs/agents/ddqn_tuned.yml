@@ -1,0 +1,4 @@
+merge: double_dqn.yml
+task:
+  model:
+    double_dqn_tuned: true
