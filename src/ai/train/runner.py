@@ -9,9 +9,10 @@ from lightning import Trainer
 from pydantic import computed_field
 
 from ..configs.base import Base
-from ..configs.main import MainConfig
 from ..configs.log import Color
+from ..configs.main import MainConfig
 from ..task.task import Task
+from .callbacks.tqdm import CustomTQDMProgressBar
 
 # from ..dataset.base_dataset import BaseDataset
 from .datamodule import AIDataModule
@@ -43,7 +44,11 @@ class Runner(Base):
         # TODO add as config
         torch.set_float32_matmul_precision("medium")
 
-        return Trainer(**lightning, default_root_dir=self.task.run_p)
+        return Trainer(
+            **lightning,
+            default_root_dir=self.task.run_p,
+            callbacks=[CustomTQDMProgressBar()],
+        )
 
     @computed_field
     @cached_property

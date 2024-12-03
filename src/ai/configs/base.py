@@ -14,6 +14,11 @@ class Base(BaseModel, Loggable):
         arbitrary_types_allowed = True
 
     @classmethod
+    def get_identifiers(cls):
+        name = cls.__name__
+        return [name, name.lower()]
+
+    @classmethod
     def from_config(cls, config: dict) -> Self:
         config = config.copy()
         source = config.pop("type")

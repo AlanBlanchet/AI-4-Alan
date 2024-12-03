@@ -70,10 +70,10 @@ class AIModule(LightningModule):
         # Log the losses
         for k, v in losses.items():
             # Change the precision of the loss to be a fixed 6
-            v = torch.tensor(float(f"{v:.6f}"))
+            v /= self.datamodule_config.batch_size
             self.log(
                 f"{split}/{k}",
-                (v / self.datamodule_config.batch_size),
+                v,
                 prog_bar=split == "train",
             )
 

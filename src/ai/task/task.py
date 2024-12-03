@@ -3,14 +3,15 @@ from __future__ import annotations
 from abc import abstractmethod
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Literal
+from typing import ClassVar, Literal, override
 
 import torch
 import torch.nn as nn
+from pydantic import computed_field
 
 from ..configs.base import Base
 from ..configs.log import Color
-from ..configs.main import ActionEnum, MainConfig
+from ..configs.main import ActionEnum, MainConfig, TaskConfig
 from ..dataset.base_dataset import BaseDataset
 from ..dataset.collator.mask import masked_collator
 from ..dataset.env.environment import EnvironmentDataset
@@ -21,18 +22,25 @@ from ..utils.env import AIEnv
 
 TASK_TYPE = Literal["binary", "multiclass", "multilabel"]
 
-if TYPE_CHECKING:
-    pass
 
-
-class Task(Base):
+class Task(Base, TaskConfig):
     log_name: ClassVar[str] = "task"
     color: ClassVar[str] = Color.magenta
+    alias: ClassVar[str]
 
     config: MainConfig
     dataset: BaseDataset
 
     train_shuffle: bool = True
+
+    @computed_field()
+    def name(self):
+        self.__class__.__name__.lower()
+
+    @override
+    @classmethod
+    def get_identifiers(cls):
+        return [*super().get_identifiers(), cls.alias]
 
     def model_post_init(self, _):
         self.log(f"Loading {self.name} task")

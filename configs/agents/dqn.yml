@@ -2,7 +2,7 @@ merge: datasets/env/breakout.yml
 
 dataset:
   params:
-    steps: 2000
+    steps: 4000
 task:
   type: reinforcementlearning
   model:
@@ -19,3 +19,5 @@ run:
   #   check_dataloader_collate_fn: False
   datamodule:
     num_workers: 0
+    batch_size: 4
+  checkpoint: True

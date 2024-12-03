@@ -1,6 +1,9 @@
 # TODO fix version
+import os
 from functools import cache, cached_property
+from pathlib import Path
 
+import cv2
 import torch
 from gymnasium.spaces import Discrete
 from pydantic import BaseModel
@@ -25,6 +28,7 @@ class Environment(BaseModel):
 
     steps_without_different_action: int = 0
     last_action: int = None
+    writer_info: tuple[cv2.VideoWriter, Path] = None
 
     def model_post_init(self, _):
         self.reset()
@@ -44,10 +48,16 @@ class Environment(BaseModel):
     def env(self):
         return AdaptedEnv(self.name)
 
+    @property
+    def is_val(self):
+        return self.steps < 0
+
     def reset(self):
         next_obs, _ = self.env.reset()
         self.buffer.next_elements["next_obs"] = self._preprocess(next_obs)
         self.steps_without_different_action = 0
+        if self.is_val:
+            self.writer_info = self.get_writer_info()
         return self.current_obs
 
     @property
@@ -73,6 +83,40 @@ class Environment(BaseModel):
             self.steps_without_different_action >= self.max_steps and self.max_steps > 0
         )
 
+    def get_writer_info(self):
+        test_p = Path("videos")
+        test_p.mkdir(exist_ok=True)
+
+        i = 1
+        while (test_p / f"eval_{i}.avi").exists():
+            i += 1
+
+        video_p = test_p / f"eval_{i}.avi"
+        writer = cv2.VideoWriter(
+            str(video_p),
+            cv2.VideoWriter_fourcc(*"MPEG"),
+            1,
+            self.view.shape[:-1][::-1],
+        )
+        writer.write(self.view)
+        return writer, video_p
+
+    def log_experience(self, experience):
+        if self.is_val:
+            done = experience[-2]
+
+            writer, path = self.writer_info
+
+            writer.write(self.view)
+
+            if done:
+                # Can't directly use the h264 codec for vscode
+                writer.release()
+                os.system(
+                    f"ffmpeg -hide_banner -i {str(path)} -c:v libx264 {path.with_suffix('.mp4')} 2>/dev/null"
+                )
+                os.remove(path)
+
     def step(self, action: torch.Tensor, *storables: torch.Tensor):
         action = action.detach().cpu().numpy()
         discrete_action = action.argmax().item()
@@ -84,6 +128,9 @@ class Environment(BaseModel):
         self.buffer.store(experience)
         if done:
             self.reset()
+
+        if self.is_val:
+            self.log_experience(experience)
 
         # Prevent going in a while loop
         if self.last_action != discrete_action:

@@ -92,7 +92,7 @@ requires-dist = [
     { name = "gymnasium", extras = ["all"], specifier = ">=1.0.0" },
     { name = "ipykernel", specifier = ">=6.29.5" },
     { name = "joblib", specifier = ">=1.4.2" },
-    { name = "lightning", specifier = ">=2.4.0" },
+    { name = "lightning", specifier = ">=2.3.0,<2.4.0" },
     { name = "methodtools", specifier = ">=0.4.7" },
     { name = "neptune", specifier = ">=1.11.1" },
     { name = "optimum", specifier = ">=1.22.0" },
@@ -1395,11 +1395,12 @@ wheels = [
 
 [[package]]
 name = "lightning"
-version = "2.4.0"
+version = "2.3.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fsspec", extra = ["http"] },
     { name = "lightning-utilities" },
+    { name = "numpy" },
     { name = "packaging" },
     { name = "pytorch-lightning" },
     { name = "pyyaml" },
@@ -1408,9 +1409,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/56/d0/78ea244ac044cd4df15aa8294a50ff3561fb177e7e5ba788aaa542046cae/lightning-2.4.0.tar.gz", hash = "sha256:9156604cc56e4b2b603f34fa7f0fe5107375c8e6d85e74544b319a15faa9ed0e", size = 620632 }
+sdist = { url = "https://files.pythonhosted.org/packages/83/a9/dddaad0bc8b93aa9eec78033ab0d241058f137380483b4142d9de2ae7eea/lightning-2.3.3.tar.gz", hash = "sha256:7f454711895c1c6e455766f01fa39522e25e5ab54c15c5e5fbad342fa92bc93c", size = 618513 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a3/2c/85eaf42c983b0cd81bcda5876da2c8e2a9fd347908666ea9855724369171/lightning-2.4.0-py3-none-any.whl", hash = "sha256:560163af9711cf59055c448232c473150a299089efce0d2be3cc3288082d8768", size = 810971 },
+    { url = "https://files.pythonhosted.org/packages/8c/31/bb00abd336f2e635d8a49ea9e80a82981e364d6cd91738aeeef99ab2ed0a/lightning-2.3.3-py3-none-any.whl", hash = "sha256:5b4950f20b5117f30aad7820709cfa56669567cf4ded93df502b3dee443a6a5d", size = 808454 },
 ]
 
 [[package]]

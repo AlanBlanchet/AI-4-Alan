@@ -16,11 +16,17 @@ class Color(BaseModel):
     blue: ClassVar[str] = "\x1b[34m"
     magenta: ClassVar[str] = "\x1b[35m"
     cyan: ClassVar[str] = "\x1b[36m"
+    orange: ClassVar[str] = "\x1b[91m"
+    lime: ClassVar[str] = "\x1b[92m"
+    gold: ClassVar[str] = "\x1b[93m"
+    sky: ClassVar[str] = "\x1b[94m"
+    pink: ClassVar[str] = "\x1b[95m"
+    teal: ClassVar[str] = "\x1b[96m"
 
 
 class Loggable:
     log_name: ClassVar[str] = "main"
-    color = None
+    color: ClassVar = None
 
     _logged_once = []
 
