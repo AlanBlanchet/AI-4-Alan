@@ -16,9 +16,7 @@ class ResNet(Backbone):
     def __init__(self, config: ResNetConfig):
         super().__init__(config)
 
-        self.conv1 = ConvBlock(
-            config.in_channels, 64, kernel_size=7, stride=2, padding=3
-        )
+        self.conv1 = ConvBlock(self.in_channels, 64, kernel_size=7, stride=2, padding=3)
 
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
 

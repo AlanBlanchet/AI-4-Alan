@@ -1,0 +1,4 @@
+merge: dqn.yml
+task:
+  model:
+    type: DRQN

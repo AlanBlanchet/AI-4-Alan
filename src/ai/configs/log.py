@@ -1,54 +1,188 @@
 from __future__ import annotations
 
 import io
-import os
 from functools import cache
-from typing import Any, ClassVar
+from logging import FileHandler, Formatter, Logger, StreamHandler, getLogger
+from pathlib import Path
+from pprint import pformat
+from typing import Any, ClassVar, Literal
 
-from pydantic import BaseModel
+from devtools import pformat as pydantic_pformat
+from pydantic import BaseModel, PrivateAttr
 from rich.console import Console
+
+from ..utils.env import AIEnv
 
 
 class Color(BaseModel):
+    black: ClassVar[str] = "\x1b[30m"
     red: ClassVar[str] = "\x1b[31m"
     green: ClassVar[str] = "\x1b[32m"
     yellow: ClassVar[str] = "\x1b[33m"
     blue: ClassVar[str] = "\x1b[34m"
     magenta: ClassVar[str] = "\x1b[35m"
     cyan: ClassVar[str] = "\x1b[36m"
+    orange: ClassVar[str] = "\x1b[91m"
+    lime: ClassVar[str] = "\x1b[92m"
+    gold: ClassVar[str] = "\x1b[93m"
+    sky: ClassVar[str] = "\x1b[94m"
+    pink: ClassVar[str] = "\x1b[95m"
+    teal: ClassVar[str] = "\x1b[96m"
+    white: ClassVar[str] = "\x1b[97m"
 
 
-class Loggable:
+LOG = Path("log")
+
+
+class Loggable(BaseModel):
     log_name: ClassVar[str] = "main"
-    color = None
+    """The name to use when calling the log function"""
+    color: ClassVar[str] = Color.white
+    """Chose a color to use when printing"""
 
     _logged_once = []
+    _logger: ClassVar[Logger] = PrivateAttr(None)
+    _loggers: ClassVar[set[Logger]] = set()
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        if cls.log_name not in cls._loggers:
+            cls._loggers.add(cls.log_name)
+            cls._logger = cls._configure_new_logger()
+
+    @classmethod
+    def _configure_new_logger(cls):
+        """Configure subclass-specific log files."""
+        logger = getLogger(f"AI-{cls.log_name}")
+
+        if logger.hasHandlers():
+            # Avoid adding duplicate handlers
+            return logger
+
+        log_p = AIEnv.tmp_log_p / cls.log_name
+        log_p.mkdir(exist_ok=True)
+
+        # FILES ====================
+        # Set up handlers for debug, info, warn, and error logs
+        file_fmt = Formatter(
+            "PID %(process)d|T %(thread)d|%(asctime)s|%(levelname)s|%(message)s"
+        )
+        debug_handler = FileHandler(log_p / "debug.txt", mode="a")
+        debug_handler.setFormatter(file_fmt)
+        debug_handler.setLevel("DEBUG")
+
+        info_handler = FileHandler(log_p / "info.txt", mode="a")
+        info_handler.setFormatter(file_fmt)
+        info_handler.setLevel("INFO")
+
+        warn_handler = FileHandler(log_p / "warn.txt", mode="a")
+        warn_handler.setFormatter(file_fmt)
+        warn_handler.setLevel("WARNING")
+
+        error_handler = FileHandler(log_p / "err.txt", mode="a")
+        error_handler.setFormatter(file_fmt)
+        error_handler.setLevel("ERROR")
+
+        # Add handlers to the logger
+        logger.addHandler(debug_handler)
+        logger.addHandler(info_handler)
+        logger.addHandler(warn_handler)
+        logger.addHandler(error_handler)
+
+        # CLI ====================
+
+        # Optionally, log to console for info messages
+        info_stream_handler = StreamHandler()
+        info_stream_handler.setFormatter(
+            Formatter(f"{cls.color}{cls._log_prefix()}\033[0m%(message)s")
+        )
+        info_stream_handler.setLevel("INFO")
+        info_stream_handler.addFilter(lambda record: record.levelno == 20)  # INFO level
+        logger.addHandler(info_stream_handler)
+
+        # Add a specific handler for warnings to show messages in yellow
+        warning_stream_handler = StreamHandler()
+        warning_stream_handler.setFormatter(
+            Formatter(
+                f"{cls.color}{cls._log_prefix()}\033[0m{Color.yellow}%(message)s\033[0m"
+            )
+        )
+        warning_stream_handler.setLevel("WARNING")
+        warning_stream_handler.addFilter(
+            lambda record: record.levelno == 30
+        )  # WARNING level
+        logger.addHandler(warning_stream_handler)
+
+        # Add a specific handler for errors to show messages in red
+        error_stream_handler = StreamHandler()
+        error_stream_handler.setFormatter(
+            Formatter(
+                f"{cls.color}{cls._log_prefix()}\033[0m{Color.red}%(message)s\033[0m"
+            )
+        )
+        error_stream_handler.setLevel("ERROR")
+        error_stream_handler.addFilter(
+            lambda record: record.levelno == 40
+        )  # ERROR level
+        logger.addHandler(error_stream_handler)
+
+        # Set logger level to DEBUG to capture all logs
+        logger.setLevel("DEBUG")
+
+        return logger
 
     @classmethod
     def _log_prefix(self) -> str:
         return f"[{self.log_name.capitalize()}] " if self.log_name else ""
 
     @classmethod
-    def log(cls, *msg: list[Any], table=False):
-        if os.getenv("MAIN_PROCESS", "1") == "1":
-            if cls.color:
-                print(
-                    cls.color
-                    + cls._log_prefix()
-                    + "\x1b[0m"
-                    + ("\n" if table else "")
-                    + " ".join([str(m) for m in msg])
-                )
+    def _resolve_msg(self, msg: list[Any]):
+        new_msg = [self.log_extras()]
+        for m in msg:
+            if isinstance(m, str):
+                new_msg.append(m)
+            elif isinstance(m, BaseModel):
+                new_msg.append(pydantic_pformat(m))
             else:
-                print(cls._log_prefix() + " ".join([str(m) for m in msg]))
+                new_msg.append(pformat(m))
+        return " ".join(new_msg)
+
+    @classmethod
+    def log_extras(cls) -> str:
+        return ""
+
+    @classmethod
+    def debug(self, *msg: list[Any]):
+        self._logger.debug(self._resolve_msg(msg))
+
+    @classmethod
+    def info(self, *msg: list[Any]):
+        self._logger.info(self._resolve_msg(msg))
+
+    @classmethod
+    def warn(self, *msg: list[Any]):
+        self._logger.warning(self._resolve_msg(msg))
+
+    @classmethod
+    def error(self, *msg: list[Any]):
+        self._logger.error(self._resolve_msg(msg))
+
+    @classmethod
+    def log(cls, *msg: list[Any], type: Literal["err", "warn", "info"] = "info"):
+        if type == "err":
+            cls.error(*msg)
+        elif type == "warn":
+            cls.warn(*msg)
+        cls.info(*msg)
 
     @classmethod
     @cache
-    def log_once(cls, *msg: list[Any], table=False):
-        cls.log(*msg, table=table)
+    def log_once(cls, *msg: list[Any]):
+        cls.info(*msg)
 
-    def log_table(self, table, width=100):
+    @classmethod
+    def log_table(cls, table, width=100):
         console = Console(file=io.StringIO(), width=width)
         console.print(table)
         output = console.file.getvalue()
-        self.log(output, table=True)
+        cls.info(output, table=True)

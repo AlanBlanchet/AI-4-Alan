@@ -38,7 +38,7 @@ class Image(Modality):
     @cached_property
     def format(self):
         format = self.bbox.get("format", "pascal_voc")
-        self.log(f"Using bbox format: {format}")
+        self.info(f"Using bbox format: {format}")
         return format
 
     @cached_property

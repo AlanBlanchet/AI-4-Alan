@@ -8,7 +8,6 @@ from .metrics import DetectionMetrics
 
 
 class Detection(Classification):
-    name: ClassVar[str] = "detection"
     alias: ClassVar[str] = "det"
 
     @cached_property

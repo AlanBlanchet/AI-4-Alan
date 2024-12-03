@@ -18,7 +18,7 @@ from ..utils.env import AIEnv
 @argument("args", nargs=-1, type=UNPROCESSED)
 def main(action: str, config: Path, args: list[str]):
     """Launch a task from a config file."""
-    from ..utils.task.task import run_task
+    from ..launch import run_task
 
     extra_params = AIEnv.parse_extra_args(*args, f"run.action={action}")
     run_task(config, extra_params=extra_params)

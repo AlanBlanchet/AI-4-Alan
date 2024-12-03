@@ -10,6 +10,7 @@ dataset:
     #   preprocess: None
     # params:
     #   path: detection-datasets/coco
+  skips: 4
   input: obs
   # labels: objects.category
   # bbox:

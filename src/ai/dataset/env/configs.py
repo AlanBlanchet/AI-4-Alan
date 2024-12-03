@@ -1,7 +1,7 @@
 import torch
 import torchvision.transforms.functional as TF
 from einops import rearrange
-from torchvision.transforms import CenterCrop, Compose, Grayscale
+from torchvision.transforms import CenterCrop, Compose, Grayscale, Resize
 
 
 def to_tensor_fn():
@@ -24,8 +24,10 @@ def crop(x_min, y_min, x_max, y_max):
 
 ENV_CONFIGS = {
     "Breakout": {
-        "preprocess": Compose([to_tensor_fn(), Grayscale(), CenterCrop((176, 146))]),
-        "out_shape": (1, 176, 146),
+        "preprocess": Compose(
+            [to_tensor_fn(), Grayscale(), Resize(84), CenterCrop((84, 84))]
+        ),
+        "out_shape": (1, 84, 84),
         "max_same_eval": 200,
     },
     "Pong": {

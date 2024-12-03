@@ -8,6 +8,7 @@ class AdaptedEnv:
         self.name = name
         self.seed = seed
         self.env = gymnasium.make(name, render_mode="rgb_array")
+        self._seeded = False
 
     @property
     def view(self):
@@ -25,6 +26,9 @@ class AdaptedEnv:
         return self.env.step(action)
 
     def reset(self):
+        if self._seeded:
+            return self.env.reset()
+        self._seeded = True
         return self.env.reset(seed=self.seed)
 
     def close(self):

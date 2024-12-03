@@ -4,7 +4,7 @@ import torch.nn as nn
 from pydantic import BaseModel, field_validator
 
 from ..dataset.patches.patch import patch_linear
-from ..nn.modules import Module
+from ..nn.compat.module import Module
 from .variants import VariantConfig
 
 

@@ -6,14 +6,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from pydantic import computed_field
 
+from ...dataset.label_map import LabelMap
 from ..metrics import GroupedMetric
 from ..task import TASK_TYPE, Task
-from .label_map import LabelMap
 from .metrics import ClassificationMetrics
 
 
 class Classification(Task):
-    name: ClassVar[str] = "classification"
     alias: ClassVar[str] = "clf"
 
     @cached_property
@@ -22,7 +21,7 @@ class Classification(Task):
 
     @cached_property
     def label_map(self):
-        self.log("Creating label map")
+        self.info("Creating label map")
         return LabelMap(labels=self.dataset._labels)
 
     @cached_property
@@ -47,14 +46,14 @@ class Classification(Task):
     @cached_property
     def task_type(self) -> TASK_TYPE:
         if self.type:
-            self.log(f"Using task type {self.type}")
+            self.info(f"Using task type {self.type}")
             return self.type
 
         if len(self.labels) > 1:
-            self.log("Using multiclass task by default")
+            self.info("Using multiclass task by default")
             return "multiclass"
         else:
-            self.log("Using binary task by default")
+            self.info("Using binary task by default")
             return "binary"
 
     def example(self, out: dict, item: dict, split: str):

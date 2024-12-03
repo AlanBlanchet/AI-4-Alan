@@ -1,8 +1,11 @@
-from abc import abstractmethod
+# from abc import abstractmethod
 
-from .pretrained import Pretrained
+# from .pretrained import Pretrained
 
 
-class Backbone(Pretrained):
-    @abstractmethod
-    def features(self): ...
+class Backbone: ...
+
+
+# class Backbone(Pretrained, buildable=False):
+#     @abstractmethod
+#     def features(self): ...

@@ -1,95 +1,161 @@
 from abc import abstractmethod
-from functools import cached_property
-from typing import Any, Mapping, TypeVar
+from queue import Empty
+from typing import Any, Literal, Mapping, TypeVar
 
 import torch
-from einops import rearrange
+import torch.nn as nn
+from pydantic import field_validator
 
-from ...dataset.env.environment import Environment
-from ...utils.func import keep_kwargs_prefixed
-from ...utils.hyperparam import parse_hyperparam
-from ..arch.dqn.config import DQNConfig
+from ...dataset.env.environment import Environment, EnvironmentDataset
+from ...dataset.env.state import StateDict
+from ...utils.hyperparam import HYPERPARAM, Hyperparam
 from .module import Module
 
 T = TypeVar("T")
 
 
-class Agent(Module):
-    def __init__(
-        self,
-        config: DQNConfig,
-        # env: Environment,
-        # policy: nn.Module,
-        # epsilon: HYPERPARAM = 0,
-        # history=0,
-        # requires_merge=True,
-        **kwargs,
-    ):
-        super().__init__(config)
-        self.config: DQNConfig
-        self.states = []
+class Agent(Module, buildable=False):
+    env: EnvironmentDataset
+    optimizer: Literal["Adam", "RMSprop", "AdamW"] = "RMSProp"
+    lr: float = 1e-3
+    gamma: float = 0.99
+    epsilon: HYPERPARAM = Hyperparam(start=0.9, end=0.1)
+    batch_size: int = 32
+    history: int = 4
+    prepare_episodes: int = 4
+    reward_shaping: bool = True
+    interactions_per_learn: int = 1
+    policy: nn.Module = None
 
-        self.env = None
+    env2agent: list[Any]
+    agent2env: list[Any]
 
-        self.lifetime = 0
-        self.history = config.history
-        self.requires_merge = config.requires_merge
-        self.epsilon = parse_hyperparam(
-            config.epsilon, end=0.1, **keep_kwargs_prefixed(kwargs, "epsilon_")
-        )
+    _env_info: dict[str, Any] = {}
+    _current_env: Environment = None
+    _current_state: Any = []
+    _states = []
+    _lifetime = 0
+    _requires_merge: bool = False
+    _queue_idx = 0
 
-        self.train()
-        self.register_state(["lifetime", "history", "requires_merge"])
+    @field_validator("policy", mode="before")
+    def validate_policy(cls, value, values):
+        if value is None:
+            return None
+        elif isinstance(value, nn.Module):
+            return value
+        elif isinstance(value, dict):
+            return Module.from_config(value)
 
-        self.env.burn(self.history)
+    @field_validator("history", mode="before")
+    def validate_history(cls, value, values):
+        history = max(value, 1)
+        if len(values["env"].preprocessed_shape) <= 1:
+            history = 1
+        return history
+
+    def init(self):
+        super().init()
+
+        if self.is_mp:
+            self._current_state = [None for _ in range(len(self.env2agent))]
+        else:
+            self._current_state = None
+
+        self._current_env = self.env.get_train()
+
+        if self.policy is None:
+            self.policy = self.setup_policy()
 
     @property
     def memory(self):
-        return self.env.buffer
+        return self.active_env.buffer
 
-    @cached_property
-    def policy(self):
-        return self.build_policy()
+    @property
+    def active_env(self):
+        return self._current_env
 
-    @abstractmethod
-    def build_policy(self): ...
+    @property
+    def is_mp(self):
+        return len(self.env2agent) > 0
 
-    # def prepare(self) -> Generator[Any, Any, Any]:
-    #     for _ in range(4):
-    #         self.env.step(action, *storables)
+    @property
+    def state(self):
+        if self.is_mp:
+            return self._current_state[self._queue_idx]
+        return self._current_state
 
-    def interact(self):
-        delayed = list(self.memory.delayed_key_map.keys())
-        # Always add a history dimension
-        obs, *delayed_obs = self.last(self.history)[delayed]
-        obs = self.env.preprocess(obs)
-        action, *storables = self.act(obs, *delayed_obs)
-        # Collect experience
-        experience = self.env.step(action, *storables)
-        self.lifetime += 1
-        return experience
+    @state.setter
+    def state(self, value):
+        if self.is_mp:
+            self._current_state[self._queue_idx] = value
+        else:
+            self._current_state = value
 
     @property
     def view(self):
-        return self.env.view
+        return self.active_env.view
 
-    def episode_interact(self, n: int):
-        dones = 0
-        while dones < n:
-            data = self.interact()[:5]
-            *_, done = data
-            dones += done
-            yield data
+    @abstractmethod
+    def setup_policy(self) -> nn.Module: ...
+
+    # def prepare(self) -> Generator[Any, Any, Any]:
+    #     for _ in range(4):
+    #         self.active_env.step(action, *storables)
+
+    def _get_state(self) -> StateDict:
+        if self.is_mp:
+            try:
+                self.state, self._env_info = self.env2agent[self._queue_idx].get()
+            except Empty as e:
+                self.error("Queue timed out", e)
+                raise e
+        else:
+            self.state = self.memory.last(self.history)
+            self._env_info = dict(memory=len(self.memory))
+        return self.state
+
+    def _send_act(self, action):
+        if self.is_mp:
+            self.agent2env[self._queue_idx].put(action)
+        else:
+            self.active_env.step(action)
+        self.step(self._lifetime)
+
+    def env_info(self):
+        return self._env_info
+
+    def interact(self):
+        # delayed = list(self.memory.delayed_key_map.keys())
+        obs = self._get_state()["next_obs"]
+
+        # Preprocess the observations
+        obs = self.active_env.preprocess(obs)
+
+        # FIXME putting this in the forward might not be the best idea
+        # It will take time to put on the device
+        obs = torch.as_tensor(obs, device=self.device)
+
+        action, *storables = self.act(obs)
+        action = action.detach().argmax().cpu().numpy()
+        # Send the action to the environment
+        self._send_act(action)
+
+        self._lifetime += 1
+
+        if self.is_mp:
+            self._queue_idx += 1
+            self._queue_idx %= len(self.env2agent)
 
     def forward(self, batch):
-        [self.interact() for _ in range(self.config.interactions_per_learn)]
-        self.step(self.lifetime)
+        [self.interact() for _ in range(self.interactions_per_learn)]
+        self.step(self._lifetime)
         return self.learn(batch)
 
     def act(self, obs: torch.Tensor, *others: torch.Tensor):
         other = ()
         if self.epsilon != 0 and torch.rand(1) < self.epsilon:
-            t = torch.rand(self.env.out_action)
+            t = torch.rand(self.active_env.out_action)
             action = (t - t.min()) / (t.max() - t.min() + 1e-6)
             if len(others) > 0:
                 elems = [obs.unsqueeze(dim=0)] + [o.unsqueeze(dim=0) for o in others]
@@ -99,50 +165,47 @@ class Agent(Module):
             action, *other = self.process_act(self.policy(*elems))
         return (action, *other)
 
-    def process_act(self, x: torch.Tensor):
-        return [o.squeeze(dim=0).softmax(dim=-1) for o in x if o is not None]
+    def process_act(self, x: torch.Tensor | tuple[torch.Tensor | Any]):
+        if isinstance(x, torch.Tensor):
+            x = [x]
+        if isinstance(x, (list, tuple)):
+            x = [y for y in x if y is not None]
+        data = self.unbatch(x)
+        data[0] = data[0].softmax(dim=-1)
+        return data
 
-    def trajectories(self, size: int):
-        for trajectory in self.memory.trajectories(size):
-            trajectory["obs"] = self.env.preprocess(trajectory["obs"])
-            trajectory["next_obs"] = self.env.preprocess(trajectory["next_obs"])
-            yield trajectory.to(self.device)
-
-    def sample(self, size: int, history: int = 0, priority: str = None):
-        samples = self.memory.sample(size, history, priority=priority)
-        samples["obs"] = self.env.preprocess(samples["obs"])
-        samples["next_obs"] = self.env.preprocess(samples["next_obs"])
-        if self.history > 0 and self.requires_merge:
-            samples["obs"] = rearrange(samples["obs"], "b s c ... -> b (s c) ...")
-            samples["next_obs"] = rearrange(
-                samples["next_obs"], "b s c ... -> b (s c) ..."
-            )
-        return samples.to(self.device)
+    def unbatch(self, data: Any):
+        if isinstance(data, (list, tuple)):
+            return [self.unbatch(d) for d in data]
+        return data.unsqueeze(dim=0)
 
     def last(self, history: int = 0):
+        if self.is_mp:
+            raise NotImplementedError
         return self.memory.last(history).to(self.device)
 
     def setup_delayed(
         self, delayed_key_map: dict[str, str], shapes: list[tuple[int, ...]]
     ):
-        self.env.setup_delayed(delayed_key_map, shapes)
+        self.active_env.setup_delayed(delayed_key_map, shapes)
 
     def state_dict(self, destination=None, prefix="", keep_vars=False):
         state_dict = super().state_dict(
             destination=destination, prefix=prefix, keep_vars=keep_vars
         )
-        state_dict.update({k: self.__getattribute__(k) for k in self.states})
+        state_dict.update({k: self.__getattribute__(k) for k in self._states})
         return state_dict
 
     def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = False):
-        [setattr(self, k, state_dict.pop(k)) for k in self.states if k in state_dict]
+        [setattr(self, k, state_dict.pop(k)) for k in self._states if k in state_dict]
         super().load_state_dict(state_dict, strict)
 
     def register_state(self, names: str | list[str]):
-        self.states.extend(names if isinstance(names, (list, tuple)) else [names])
+        self._states.extend(names if isinstance(names, (list, tuple)) else [names])
 
     def drop(self, env: Environment):
-        self.env = env
+        if not self.is_mp:
+            self._current_env = env
 
     def step(self, train_step: int):
         if self.training:
@@ -177,8 +240,8 @@ class Agent(Module):
     def train(self, mode: bool = True):
         if mode:
             self.epsilon.train_()
-            self.drop(self.config.env.train())
+            self.drop(self.env.get_train())
         else:
             self.epsilon.eval_()
-            self.drop(self.config.env.val())
+            self.drop(self.env.get_val())
         return super().train(mode)

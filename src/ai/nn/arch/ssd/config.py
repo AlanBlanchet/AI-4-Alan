@@ -1,8 +1,8 @@
-from ....configs.backbone import HasBackbone
-from ....configs.pretrained import PretrainedConfig
+# from ....configs.backbone import HasBackbone
+# from ....configs.pretrained import PretrainedConfig
 
 
-class SSDConfig(PretrainedConfig, HasBackbone):
-    variants = ["300", "512"]
+# class SSDConfig(PretrainedConfig, HasBackbone):
+#     variants = ["300", "512"]
 
-    # TODO Add model specifics
+#     # TODO Add model specifics
