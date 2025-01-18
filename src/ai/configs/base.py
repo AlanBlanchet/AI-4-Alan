@@ -1,15 +1,21 @@
 from __future__ import annotations
 
+import inspect
 import re
+from copy import deepcopy
 from enum import IntEnum
 from inspect import isclass
-from typing import TYPE_CHECKING, Any, ClassVar, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Optional, Self
 
-from pydantic import PrivateAttr
+from pydantic import BaseModel, PrivateAttr
+from pydantic._internal._decorators import DecoratorInfos
+from pydantic._internal._model_construction import ModelMetaclass
+from pydantic.fields import FieldInfo
 from torch.utils.data import get_worker_info
 
 from ..registry import REGISTER
 from ..utils.func import classproperty
+from ..utils.pydantic_ import validator
 from .log import Loggable
 
 if TYPE_CHECKING:
@@ -21,8 +27,40 @@ class ActionEnum(IntEnum):
     val = 1
 
 
-class Base(Loggable):
+# class PydanticAutoMetaclass(ModelMetaclass):
+#     def __new__(
+#         mcs,
+#         cls_name: str,
+#         bases: tuple[type[Any], ...],
+#         namespace: dict[str, Any],
+#         **kwargs: Any,
+#     ):
+#         cls = super().__new__(mcs, cls_name, bases, namespace, **kwargs)
+
+#         for name, field in cls.model_fields.items():
+#             field: FieldInfo
+#             mcls = field.annotation
+#             if isclass(mcls) and issubclass(mcls, Base):
+#                 mcls: Base
+#                 validator_name = f"validate_{name}"
+#                 if not hasattr(cls, validator_name):
+
+#                     @validator(name)
+#                     def auto_validator(cls, v, values):
+#                         if v is None:
+#                             v = {}
+#                         return cls.from_config(v, values)
+
+#                     setattr(cls, validator_name, auto_validator)
+
+#         return cls
+
+
+class Base(Loggable, metaclass=ModelMetaclass):
     _root_config: Main | None = PrivateAttr(None)
+
+    auto_build: ClassVar[bool] = False
+    """Allows to build the object even if no config is provided"""
 
     identification_name: ClassVar[str] = "type"
 
@@ -43,6 +81,47 @@ class Base(Loggable):
         return cls.__subclasses__() + [
             g for s in cls.__subclasses__() for g in s.all_subclasses()
         ]
+
+    @classmethod
+    def __get_pydantic_core_schema__(cls, _source_type: Any, _handler: Any):
+        # validators = cls.__pydantic_decorators__.field_validators
+        for name, field in cls.model_fields.items():
+            field: FieldInfo
+            mcls = field.annotation
+            if isclass(mcls) and issubclass(mcls, Base):
+                mcls: Base
+
+                if mcls.auto_build:
+                    # Allow None to validate by default with the validator
+                    field.validate_default = True
+                    field.default = None
+
+                # Create the default validator
+                validator_name = f"validate_{name}"
+                if not hasattr(cls, validator_name):
+
+                    @validator(name)
+                    def auto_validator(cls, v, values, mcls=mcls):
+                        """Automatically build the object from the config"""
+                        if isinstance(v, mcls):
+                            return v
+                        elif v is None:
+                            v = {}
+
+                        if mcls.identification_name in v:
+                            obj = mcls.from_config(v)
+                        else:
+                            obj = mcls(**v)
+
+                        return obj
+
+                    setattr(cls, validator_name, auto_validator)
+
+        decorators = deepcopy(cls.__pydantic_decorators__)
+        new_decorators = DecoratorInfos.build(cls)
+        cls.__pydantic_decorators__ = decorators
+        decorators.field_validators.update(new_decorators.field_validators)
+        return super().__get_pydantic_core_schema__(_source_type, _handler)
 
     @classmethod
     def from_config(
@@ -71,6 +150,18 @@ class Base(Loggable):
             )
 
         sub = cls.get_cls(id)
+
+        if "_args" in config and inspect.isclass(sub):
+            args = config.pop("_args")
+            if issubclass(sub, BaseModel):
+                params = list(sub.model_fields)
+            else:
+                signature = inspect.signature(sub.__init__)
+                params = list(signature.parameters)[1:]  # remove self
+
+            kwargs = {name: arg for name, arg in zip(params, args)}
+            config.update(kwargs)
+
         built = sub(**config)
         try:
             built.post_config(root)
@@ -165,6 +256,8 @@ class Base(Loggable):
 
 
 class BaseMP(Base):
+    num_workers: Optional[int] = None
+
     @classproperty
     def is_mp(cls):
         return cls.worker_id is not None

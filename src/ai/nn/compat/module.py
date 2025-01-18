@@ -89,66 +89,6 @@ class Module(
     log_name = "module"
     color: ClassVar[str] = Color.blue
 
-    def __init__(self, **kwargs):
-        # First initialize the nn.Module
-        self.INIT_CLS.__init__(self)
-        # Copy the current state (modules, buffers, parameters...)
-        original_nn_state = self.__dict__.copy()
-
-        # Initialize model
-        # This erases the state but we need it in the post_init !
-        # This is why we saved it in original_nn_state
-        super().__init__(**kwargs)
-        # Restore the state
-        self.__dict__.update(original_nn_state)
-
-        attrs = self.__dict__.copy()
-        # Use the setattr method on nn.Module to use its logic
-        for k, v in attrs.items():
-            if isinstance(v, nn.Module):
-                nn.Module.__setattr__(self, k, v)
-
-        self.__dict__["__cached_properties__"] = {}
-        for k in dir(self.__class__):
-            v = getattr(self.__class__, k)
-            if isinstance(v, cached_property):
-                self.__cached_properties__[k] = v
-
-        self.init()
-
-    def init(self):
-        """
-        Initialize the model
-        """
-        for k, field in self.model_computed_fields.items():
-            unwrapped = field.wrapped_property.fget(self)
-            if k in self.BASE_SPECIAL_KEYS or isinstance(unwrapped, nn.Module):
-                raise ValueError(
-                    f"Do not use any form of caching for Modules with pydantic. '{k}' is a Module",
-                    "Caching prevents nn.Module from accessing it's 'real' modules from _modules, _buffers and _parameters when changing device",
-                )
-
-    def __repr__(self):
-        """Use nn.Module's __repr__ explicitly"""
-        return self.INIT_CLS.__repr__(self)
-
-    def __setattr__(self, name, value):
-        if name in self.BASE_SPECIAL_KEYS or isinstance(value, self.INIT_CLS):
-            self.INIT_CLS.__setattr__(self, name, value)
-        else:
-            super().__setattr__(name, value)
-
-    def __getattr__(self, name):
-        try:
-            return self.INIT_CLS.__getattr__(self, name)
-        except AttributeError:
-            return super().__getattr__(name)
-
-    # Prevents training from being in the constructor
-    @property
-    def training(self):
-        return self.INIT_CLS.training
-
     @classmethod
     def log_extras(cls):
         return f"[{cls.__name__}]"
@@ -163,12 +103,6 @@ class Module(
         if len(rest) > 0:
             return cls._module_by_name(module, ".".join(rest))
         return module
-
-    def module_by_name(self, name: str):
-        """
-        Get a module by name
-        """
-        return self._module_by_name(self, name)
 
     @classmethod
     def _replace_module(
@@ -228,6 +162,127 @@ class Module(
                 # Attach the new module
                 setattr(parent, mod_name, replace_with)
 
+    @classmethod
+    def forward_info(
+        cls, module: nn.Module, forward_args: list[Any], ignores: list[str] = []
+    ):
+        """
+        We utilize the forward hooks to compute relevant information about the model structure and weights
+        """
+        info = dict(order=[], shape=[], dtype=[], device=[])
+        handles = []
+        # Defined the order of weights from the passed module
+        for k, v in module.named_modules():
+            # Capture k in the closure
+            def _hook(sub: nn.Module, *args, k=k):
+                if isinstance(sub, nn.MultiheadAttention):
+                    # MHA hides parameters
+                    parameters = sub.named_parameters()
+                else:
+                    parameters = sub._parameters.items()
+
+                # Get current module's parameters / buffers
+                for pb, t in list(parameters) + list(sub._buffers.items()):
+                    if t is None:
+                        # Tensor can be None, in that case it will not be in the module state_dict
+                        continue
+
+                    if not any([i in pb for i in ignores]):
+                        # We gather the info
+                        order_name = f"{k}.{pb}" if k != "" else pb
+                        info["order"].append(order_name)
+                        info["shape"].append(t.shape)
+                        info["dtype"].append(t.dtype)
+                        info["device"].append(t.device)
+
+            handles.append(v.register_forward_hook(_hook))
+
+        # Call the hooks
+        module.eval()(*forward_args)
+        # Remove all the hooks
+        for h in handles:
+            h.remove()
+
+        return info  # Order should be filled
+
+    # Prevents training from being in the constructor
+    @property
+    def training(self):
+        return self.INIT_CLS.training
+
+    @property
+    def device(self):
+        return next(self.parameters()).device
+
+    def __init__(self, **kwargs):
+        # First initialize the nn.Module
+        self.INIT_CLS.__init__(self)
+        # Copy the current state (modules, buffers, parameters...)
+        original_nn_state = self.__dict__.copy()
+
+        # Initialize model
+        # This erases the state but we need it in the post_init !
+        # This is why we saved it in original_nn_state
+        super().__init__(**kwargs)
+        # Restore the state
+        self.__dict__.update(original_nn_state)
+
+        attrs = self.__dict__.copy()
+        # Use the setattr method on nn.Module to use its logic
+        for k, v in attrs.items():
+            if isinstance(v, nn.Module):
+                nn.Module.__setattr__(self, k, v)
+
+        self.__dict__["__cached_properties__"] = {}
+        for k in dir(self.__class__):
+            v = getattr(self.__class__, k)
+            if isinstance(v, cached_property):
+                self.__cached_properties__[k] = v
+
+        self.init()
+
+    def __init_subclass__(cls, **kwargs):
+        if not cls.model_post_init.__module__.startswith("pydantic"):
+            # User has defined a model_post_init method
+            raise ValueError(
+                f"model_post_init is a reserved method for Pydantic Modules {cls.__name__}. Please use the init instead."
+            )
+        return super().__init_subclass__(**kwargs)
+
+    def init(self):
+        """
+        Initialize the model
+        """
+        for k, field in self.model_computed_fields.items():
+            unwrapped = field.wrapped_property.fget(self)
+            if k in self.BASE_SPECIAL_KEYS or isinstance(unwrapped, nn.Module):
+                raise ValueError(
+                    f"Do not use any form of caching for Modules with pydantic. '{k}' is a Module",
+                    "Caching prevents nn.Module from accessing it's 'real' modules from _modules, _buffers and _parameters when changing device",
+                )
+
+    def __repr__(self):
+        """Use nn.Module's __repr__ explicitly"""
+        return self.INIT_CLS.__repr__(self)
+
+    def __setattr__(self, name, value):
+        if name in self.BASE_SPECIAL_KEYS or isinstance(value, self.INIT_CLS):
+            self.INIT_CLS.__setattr__(self, name, value)
+        else:
+            super().__setattr__(name, value)
+
+    def __getattr__(self, name):
+        try:
+            return self.INIT_CLS.__getattr__(self, name)
+        except AttributeError:
+            return super().__getattr__(name)
+
+    def module_by_name(self, name: str):
+        """
+        Get a module by name
+        """
+        return self._module_by_name(self, name)
+
     def replace_module(
         self,
         criteria: str | nn.Module | type | Callable,
@@ -273,49 +328,6 @@ class Module(
 
         self.info("Loading state dict")
         super().load_state_dict(no_missmatch_state_dict, strict=strict, assign=assign)
-
-    @classmethod
-    def forward_info(
-        cls, module: nn.Module, forward_args: list[Any], ignores: list[str] = []
-    ):
-        """
-        We utilize the forward hooks to compute relevant information about the model structure and weights
-        """
-        info = dict(order=[], shape=[], dtype=[], device=[])
-        handles = []
-        # Defined the order of weights from the passed module
-        for k, v in module.named_modules():
-            # Capture k in the closure
-            def _hook(sub: nn.Module, *args, k=k):
-                if isinstance(sub, nn.MultiheadAttention):
-                    # MHA hides parameters
-                    parameters = sub.named_parameters()
-                else:
-                    parameters = sub._parameters.items()
-
-                # Get current module's parameters / buffers
-                for pb, t in list(parameters) + list(sub._buffers.items()):
-                    if t is None:
-                        # Tensor can be None, in that case it will not be in the module state_dict
-                        continue
-
-                    if not any([i in pb for i in ignores]):
-                        # We gather the info
-                        order_name = f"{k}.{pb}" if k != "" else pb
-                        info["order"].append(order_name)
-                        info["shape"].append(t.shape)
-                        info["dtype"].append(t.dtype)
-                        info["device"].append(t.device)
-
-            handles.append(v.register_forward_hook(_hook))
-
-        # Call the hooks
-        module.eval()(*forward_args)
-        # Remove all the hooks
-        for h in handles:
-            h.remove()
-
-        return info  # Order should be filled
 
     # @cached_property
     # def memoized_forward_info(self):

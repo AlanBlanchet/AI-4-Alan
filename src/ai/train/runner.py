@@ -6,6 +6,7 @@ from typing import ClassVar
 
 import torch
 from lightning import Trainer
+from lightning.pytorch.profilers import PyTorchProfiler
 from pydantic import field_validator
 
 from ..configs import ActionEnum, Base, Color
@@ -51,11 +52,20 @@ class Runner(Base):
         # TODO add as config
         torch.set_float32_matmul_precision("medium")
 
+        profiler_p = self.task.run_p / "profiler"
+        profiler_p.mkdir(exist_ok=True)
+        profiler = PyTorchProfiler(
+            dirpath=profiler_p,
+            output_filename="profiler.json",
+            export_to_chrome=True,
+        )
+
         return Trainer(
             **lightning,
             default_root_dir=self.task.run_p,
             callbacks=[CustomTQDMProgressBar()],
             num_sanity_val_steps=0,
+            profiler=profiler,
         )
 
     def __call__(self):

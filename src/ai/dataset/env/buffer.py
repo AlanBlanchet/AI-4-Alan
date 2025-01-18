@@ -95,7 +95,7 @@ class ReplayBuffer(BaseMP):
             dtype = torch.int32
         else:
             dtype = torch.int64
-        self.debug("Using dtype for indexes", dtype)
+        self.debug(f"Using f{dtype=} for indexes")
         return dtype
 
     def model_post_init(self, __context):

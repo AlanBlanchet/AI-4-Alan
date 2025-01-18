@@ -34,7 +34,7 @@ class R2D2(Agent):
         # DRQN means history is in the form of an embedding in the last hidden_state
         self.hidden_dim = 16
         history = max(history, 1)
-        if len(env.preprocessed_shape) <= 1:
+        if len(env._preprocessed_shape) <= 1:
             history = 1
 
         self._train_steps = 0
@@ -52,7 +52,7 @@ class R2D2(Agent):
         super().__init__(
             env,
             DQNPolicy(
-                env.preprocessed_shape,
+                env._preprocessed_shape,
                 env.out_action,
                 history=history,
                 last_layer="linear" if not recurrent else "lstm",

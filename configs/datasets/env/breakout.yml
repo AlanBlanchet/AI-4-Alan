@@ -2,12 +2,13 @@ dataset:
   source: gym
   params:
     name: ALE/Breakout-v5
-    max_steps: 300
+    max_steps: 200
   skips: 4
   input: obs
-  # modalities:
-  #   - type: image
-  #     resize: 84
-  #     augmentations:
-  #       - type: CenterCrop
-  #         size: 84
+  modalities:
+    - type: image
+      input: obs
+      augmentations:
+        - grayscale
+        - padcrop: [34, 0, 16, 0] # [160,160]
+        - resize: 84

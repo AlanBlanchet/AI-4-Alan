@@ -4,52 +4,56 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import torchvision.transforms.functional as T
 from albumentations import (
     BboxParams,
     Compose,
     Normalize,
-    Resize,
 )
+from albumentations import Resize as AResize
 from albumentations.pytorch import ToTensorV2
 from PIL import Image as PImage
 from pydantic import field_validator
 from torchvision.utils import draw_bounding_boxes
 
-from ..configs.base import Base
-from ..utils.augmentations import AUGS
-from .modality import Modality
-
-
-class ImageAugmentation(Base, buildable=False):
-    def __call__(self, *args, **kwargs):
-        print(args, kwargs)
+from ...utils.augmentations import AUGS
+from ..modality import Modality
+from .augmentations import Augmentations, ImageAugmentation
 
 
 class Image(Modality):
-    resize: int | tuple[int, int] = None
+    augmentations: Augmentations
 
-    augmentations: list[ImageAugmentation] = {}
-
-    image: dict = {}
-    bbox: dict = None
+    input: list[str] = "image"
 
     @field_validator("augmentations", mode="before")
     @classmethod
     def validate_augmentations(cls, value):
-        return ImageAugmentation.from_config(value)
+        real_list = []
+        for v in value:
+            if isinstance(v, str):
+                real_list.append({"type": v})
+            elif isinstance(v, dict):
+                if "type" not in v:
+                    v["type"] = list(v.keys())[0]
+                    poped_val = v.pop(v["type"])
+                    v["_args"] = (poped_val,)
+                real_list.append(v)
+            else:
+                real_list.append(v)
 
-    @field_validator("image", mode="before")
-    def validate_image(cls, value):
-        if isinstance(value, str):
-            return dict(name=value)
-        return value
+        return ImageAugmentation.from_config(real_list)
 
-    @field_validator("bbox", mode="before")
-    def validate_bbox(cls, value):
-        if isinstance(value, str):
-            return dict(name=value)
-        return value
+    # @field_validator("image", mode="before")
+    # def validate_image(cls, value):
+    #     if isinstance(value, str):
+    #         return dict(name=value)
+    #     return value
+
+    # @field_validator("bbox", mode="before")
+    # def validate_bbox(cls, value):
+    #     if isinstance(value, str):
+    #         return dict(name=value)
+    #     return value
 
     @cached_property
     def format(self):
@@ -87,35 +91,35 @@ class Image(Modality):
             val=Compose([unnorm]),
         )
 
-    def preprocess(self, data: dict[str, torch.Tensor], split: str):
-        image = data["image"]
-        image = image.numpy() if isinstance(image, torch.Tensor) else image
+    def preprocess(self, image, bboxes=None, labels=None):
+        image = torch.as_tensor(image)
 
         # Validation / Formatting
         if image.ndim == 2:
             image = image[:, :, None]
 
-        if image.shape[-1] == 1:
-            image = np.repeat(image, 3, axis=-1)
+        # if image.shape[-1] == 1:
+        #     image = np.repeat(image, 3, axis=-1)
 
-        if image.shape[0] == 3:
-            image = image.transpose(1, 2, 0)
+        if image.shape[-1] == 3:
+            image = image.permute(2, 0, 1)
 
         # If there are bboxes, we are in bbox mode
-        bboxes = data.get("bbox")
-        extra = {"bboxes": bboxes, "labels": data.get("labels")}
+        extra = {"bboxes": bboxes, "labels": labels}
         if bboxes is None:
             extra = {}
 
         # TODO replace with torchvision transforms
-        out = self.transforms[split](image=image, **extra)
+        # out = self.transforms(image=image, **extra)
+        image = self.augmentations(image)
 
         # Fill data with transformed values
-        for k, v in out.items():
-            k = "bbox" if k == "bboxes" else k
-            data[k] = torch.as_tensor(v)
+        # for k, v in out.items():
+        #     k = "bbox" if k == "bboxes" else k
+        #     data[k] = torch.as_tensor(v)
+        # data[self.input] = image
 
-        return data
+        return dict(image=image)
 
     def postprocess(self, data: dict[str, torch.Tensor], split: str):
         size = data["image_size"]
@@ -148,7 +152,7 @@ class Image(Modality):
         max_res = max(H, W)
         if upsample and max_res < 1080:
             mul = 1080 / max_res
-            image = Resize(int(H * mul), int(W * mul))(
+            image = AResize(int(H * mul), int(W * mul))(
                 image=image.permute(1, 2, 0).numpy()
             )["image"]
             image = torch.as_tensor(image).permute(2, 0, 1)
@@ -305,11 +309,5 @@ class Image(Modality):
 
         return out
 
-
-class CenterCrop(ImageAugmentation):
-    size: int | tuple[int, int]
-
     def __call__(self, *args, **kwargs):
-        img = kwargs["image"]
-        kwargs["image"] = T.center_crop(img, self.size)
-        return kwargs
+        return self.preprocess(*args, **kwargs)

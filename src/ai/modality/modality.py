@@ -3,14 +3,25 @@ from functools import cache
 from typing import ClassVar
 
 import torch
+from pydantic import Field, field_validator
 
 from ..configs.base import Base
 from ..configs.log import Color
+from ..utils.types import CallableList
 
 
 class Modality(Base):
     log_name: ClassVar[str] = "modality"
     color: ClassVar[str] = Color.red
+
+    input: list[str] = Field([], validate_default=True)
+
+    @field_validator("input", mode="before")
+    @classmethod
+    def validate_input(cls, value):
+        if not isinstance(value, list):
+            return [value]
+        return value
 
     @staticmethod
     @abstractmethod
@@ -54,3 +65,20 @@ class Modality(Base):
         res[name] = elem
         res[f"{name}_mask"] = mask
         return res
+
+
+class Modalities(CallableList[Modality]):
+    def __call__(self, data):
+        for modality in self:
+            if isinstance(data, dict):
+                inputs = modality.input
+
+                out = modality(
+                    {input: v for input, v in data.items() if input in inputs}
+                )
+
+                for k, v in out.items():
+                    data[k] = v
+            else:
+                data = modality(data)
+        return data

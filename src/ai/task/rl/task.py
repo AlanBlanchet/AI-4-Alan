@@ -1,56 +1,45 @@
 import multiprocessing as mp
-from typing import ClassVar
+from typing import ClassVar, Self
 
 import lightning.pytorch.loops.evaluation_loop as pl_eval_loop
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from lightning.pytorch.loops.fetchers import _DataFetcher
-from pydantic import field_validator
+from lightning.pytorch.loops.fetchers import _PrefetchDataFetcher
 from torch.utils.data import get_worker_info
 from torchvision.utils import save_image
 
 from ...dataset.env.environment import EnvironmentDataset
 from ...dataset.env.queues import RLQueues
 from ...train.datamodule import AIDataModule
+from ...utils.pydantic_ import validator
 from ..metrics import GroupedMetric
 from ..task import Task
 from .metrics import RLMetric
 
 
 class ReinforcementLearning(Task):
-    alias: ClassVar[str] = "rl"
+    alias = "rl"
+    _queues: ClassVar[RLQueues] = None
+    """Queues for communication between the environment and the agent"""
 
     dataset: EnvironmentDataset
+    """For RL, we specifically use an EnvironmentDataset"""
     metrics: GroupedMetric = GroupedMetric(
         lambda: RLMetric(["reward", "memory", "epsilon"]),
         ["train", "val"],
     )
+    """RL tasks have their own metrics"""
 
-    _queues: ClassVar[RLQueues] = None
-
-    def model_post_init(self, __context):
-        # Patch the data fetcher in the EvalLoop to use our custom one
-        # This prevents double fetching at the start which we don't want
-        _select_data_fetcher = pl_eval_loop._select_data_fetcher
-
-        def _patched_select_data_fetcher(trainer, stage):
-            return _DataFetcher()
-
-        pl_eval_loop._select_data_fetcher = _patched_select_data_fetcher
-
-    @field_validator("datamodule", mode="before")
-    @classmethod
-    def validate_datamodule(cls, v: dict, others):
-        if "train_shuffle" not in v or v["train_shuffle"]:
+    @validator("datamodule")
+    def validate_datamodule(cls, value: dict, values):
+        if "train_shuffle" not in value or value["train_shuffle"]:
             cls.warn("Explicitely setting train_shuffle to False for RL")
-            v["train_shuffle"] = False
+            value["train_shuffle"] = False
         # We need to create the queues before the datamodule is created
 
-        ctx = mp.get_context("spawn")
-        cls._queues = RLQueues(ctx=ctx, num_workers=v["num_workers"])
+        ctx = mp.get_context("fork")
+        cls._queues = RLQueues(ctx=ctx, num_workers=value["num_workers"])
         return AIDataModule(
-            dataset=others.data["dataset"], **{**v, **cls.datamodule_kwargs()}
+            dataset=values["dataset"], **{**value, **cls.datamodule_kwargs()}
         )
 
     @classmethod
@@ -76,8 +65,16 @@ class ReinforcementLearning(Task):
             if dataset.is_val
             else cls._queues.train[worker_id]
         )
-        cls.info("Using", id(split_queue.agent2env), id(split_queue.env2agent), "queue")
         dataset.init_worker(worker_id, split_queue)
+
+    def init(self):
+        # Patch the data fetcher in the EvalLoop to use our custom one
+        # This prevents double fetching at the start which we don't want
+
+        def _patched_select_data_fetcher(trainer, stage):
+            return RLPrefetchDataFetcher()
+
+        pl_eval_loop._select_data_fetcher = _patched_select_data_fetcher
 
     def default_loss(self, out: dict, batch: dict) -> dict:
         raise NotImplementedError
@@ -100,22 +97,16 @@ class ReinforcementLearning(Task):
         for i, channel in enumerate(obs):
             save_image(channel, out_p / f"channel_{i}.png")
 
-    # def validation_step(
-    #     self, batch, batch_idx=None, dataloader_idx=0, dataloader_iter=0
-    # ):
-    #     """Reinforcement learning doesn't uses iterable datasets, thus there is no batch id"""
-    #     return super().validation_step(batch, batch_idx)
 
-    def process_output(
-        self, model: nn.Module, batch: dict[str, torch.Tensor], split: str
-    ) -> dict:
-        input = batch["input"]
-        labels = batch["labels"]
+class RLPrefetchDataFetcher(_PrefetchDataFetcher):
+    """Custom data fetcher for RL tasks"""
 
-        out: torch.Tensor = model(input)
+    def __init__(self, prefetch_batches=1):
+        super().__init__(prefetch_batches)
+        assert prefetch_batches == 1, "RL tasks only support prefetch_batches=1"
 
-        loss = F.cross_entropy(out, labels)
-
-        self.metrics.update(out, labels, split=split)
-
-        return dict(loss=loss)
+    def __iter__(self) -> Self:
+        """Removes first fetching of data in the prefetch iterator"""
+        self.iterator = iter(self.combined_loader)
+        self.reset()
+        return self

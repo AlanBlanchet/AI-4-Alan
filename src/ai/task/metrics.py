@@ -73,3 +73,10 @@ class GroupedMetric(nn.Module):
 
     def compute(self, split: str):
         return self.metrics[split].compute()
+
+
+class EmptyMetric(Metric):
+    def update(self, *args, **kwargs): ...
+
+    def compute(self, **kwargs):
+        return {}

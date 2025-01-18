@@ -11,7 +11,7 @@
       "cwd": "${workspaceFolder}",
       "request": "launch",
       "module": "ai.cli.debug",
-      "args": ["val", "configs/agents/dqn.yml"],
+      "args": ["train", "configs/agents/ddqn_tuned.yml"],
       "pythonArgs": ["-Xfrozen_modules=off"],
       "env": {
         "CUDA_VISIBLE_DEVICES": "0"

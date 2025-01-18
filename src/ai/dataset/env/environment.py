@@ -5,7 +5,8 @@ import queue
 from functools import cache, cached_property
 from multiprocessing import Queue
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
+from typing import Optional
 
 import numpy as np
 import torch
@@ -14,13 +15,14 @@ from torch.utils.data import Dataset, IterableDataset
 
 from ...configs.base import BaseMP
 from ...configs.log import Color
+from ...modality.modality import Modalities
 from ...utils.func import TensorInfo
 from ..base_dataset import BaseDataset
 from .adapter import AdaptedEnv
 from .buffer import ReplayBuffer
 from .queues import SplitQueue
 from .state import StateDict
-from .utils import get_env_config, get_preprocess
+from .utils import get_env_config
 from .video import VideoManager
 
 
@@ -39,13 +41,14 @@ class Environment(BaseMP):
     memory: int
     history: int
     preprocess_buffer: bool = True
+    preprocess: Modalities
 
     required_batch_size: int = 1
     total_steps: int = -1
     max_steps: int = -1
 
     skips: int = 0
-    timeout: int = 5
+    timeout: Optional[int] = None
 
     _last_action: int = None
     _steps_without_different_action: int = 0
@@ -58,6 +61,8 @@ class Environment(BaseMP):
     _agent2env: Queue = None
     _env2agent: Queue = None
     _last_transition: tuple = None
+    _preprocessed_shape: tuple = None
+    _interact_ready: Event = None
 
     @classmethod
     def log_extras(cls):
@@ -89,10 +94,6 @@ class Environment(BaseMP):
             and self.max_steps > 0
         )
 
-    @cached_property
-    def preprocess_fn(self) -> str:
-        return get_preprocess(self.name)
-
     @property
     def render_mode(self):
         return self._env.render_mode
@@ -105,14 +106,9 @@ class Environment(BaseMP):
             return self._env.observation_space.shape
 
     @property
-    def preprocessed_shape(self):
-        config = get_env_config(self.name)
-        return config.get("out_shape", self.observation_shape)
-
-    @property
     def effective_shape(self):
         return (
-            self.preprocessed_shape
+            self._preprocessed_shape
             if self.preprocess_buffer
             else self.observation_shape
         )
@@ -157,31 +153,46 @@ class Environment(BaseMP):
             return False
         return self._last_transition[-2]
 
+    @property
+    def current_epoch_step(self):
+        """Where are we in the current epoch from the trainer"""
+        if isinstance(self, TrainEnvironment):
+            worker_epoch_steps = len(self) // max(self.num_workers, 1)
+            return self._requested_items % worker_epoch_steps
+        else:
+            return self._requested_items
+
+    @property
+    def is_epoch_first_request(self):
+        """Check if the current request is the first request of the epoch"""
+        return self.current_epoch_step == 0
+
     def model_post_init(self, __context):
         super().model_post_init(__context)
 
         self.init()
 
+    def __del__(self):
+        self.close()
+
     def init(self, seed=None):
         self._env = AdaptedEnv(name=self.name, seed=seed)
+
+        obs, _ = self._env.reset()
+        preprocess_obs = self._preprocess(obs)
+        self._preprocessed_shape = preprocess_obs.shape
+
         self._buffer = ReplayBuffer(
             capacity=self.memory,
             obs_info=TensorInfo(shape=self.effective_shape, dtype=torch.uint8),
             action_info=TensorInfo(shape=self.out_action, dtype=torch.float32),
         )
+
         self.reinitialize()
-
-        name = self.name if self.worker_id is None else f"{self.name}_{self.worker_id}"
-        interaction_thread = Thread(target=self.interaction_loop, args=(), name=name)
-        interaction_thread.start()
-
-    def interaction_loop(self):
-        while True:
-            self._poll()
 
     @BaseMP.watch
     def reinitialize(self, send=True):
-        self.info("Reinitializing environment")
+        self.debug("Reinitializing environment")
 
         self._lifetime = 0
         self._requested_items = 0
@@ -215,22 +226,22 @@ class Environment(BaseMP):
         """
         self._agent2env = queues.agent2env
         self._env2agent = queues.env2agent
+        self._interact_ready = Event()
+
+        self.init(worker_id)
 
         self.info(
             f"Initializing {self.__class__.__name__} worker in forked environment"
         )
-        self.init(seed=worker_id)
-        self.reinitialize(send=False)
+
+        name = f"{self.__class__.__name__}_thread_{worker_id}"
+        self._interact_thread = Thread(target=self.iteration_loop, name=name)
+        self._interact_thread.start()
 
         # Initialize default variables for each worker
         self._log_p = self._log_p / f"worker_{worker_id}"
         self._log_p.mkdir(exist_ok=True, parents=True)
         self.setup_video()
-
-        # Workers get their own memory space (except for the 0 ?)
-
-        # Let the iterator send to the queue
-        # self.reinitialize(send=False)
 
     @BaseMP.watch
     def setup_video(self):
@@ -251,7 +262,7 @@ class Environment(BaseMP):
     def set_run_p(self, run_p: Path):
         self._log_p = run_p / "video"
         self._log_p.mkdir(exist_ok=True, parents=True)
-        # self.setup_video()
+        self.setup_video()
 
     def reset(self):
         self.debug("Environment reset called")
@@ -271,7 +282,6 @@ class Environment(BaseMP):
         self.buffer.setup_delayed(delayed_key_map, shapes)
 
     def close(self):
-        self.reset()
         self._env.close()
 
     def log_transition(self, next_obs: torch.Tensor = None):
@@ -288,7 +298,7 @@ class Environment(BaseMP):
                 )
 
     @BaseMP.watch
-    def step(self, action: np.ndarray, *storables: np.ndarray, send: bool = False):
+    def step(self, action: np.ndarray, *storables: np.ndarray, queue: bool = False):
         discrete_action = action.argmax().item()
 
         # Frame skip
@@ -305,14 +315,6 @@ class Environment(BaseMP):
         obs, *delayed = self.last_delayed.values()
         next_obs, reward, terminate, truncated, _ = self._env.step(discrete_action)
         done = terminate or truncated or done_while_skipping or self._is_over_max_steps
-        # INFO debugging
-        if (
-            self.is_val
-            and self._requested_items == 30
-            and self.is_mp
-            and self.worker_id == 0
-        ):
-            done = True
 
         next_obs = self._preprocess(next_obs)
         transition = (obs, action, reward, next_obs, done, (delayed, storables))
@@ -322,19 +324,15 @@ class Environment(BaseMP):
 
         self.log_transition(next_obs)
 
-        # Prevent going in a while loop
+        # Prevent going in a while loop without taking any actions
         if self._last_action != discrete_action:
             self._last_action = discrete_action
             self._steps_without_different_action = 0
         else:
             self._steps_without_different_action += 1
 
-        if self._lifetime % 100 == 0:
-            self.debug(f"Environment total steps {self._lifetime}")
-
-        if self.is_mp and send:
+        if self.is_mp and queue:
             out = self.buffer.last(self.history).format_out()
-            self.info("Sending", out["obs"].mean())
             self._env2agent.put(
                 (dict(out), dict(memory=len(self.buffer))), timeout=self.timeout
             )
@@ -346,18 +344,15 @@ class Environment(BaseMP):
 
     def burn(self, n: int, send=False):
         self.debug(f"Burning {n} steps")
+        last = None
         for _ in range(n):
             action = self._env.random_action()
-            self.step(action, send=send)
+            last = self.step(action, queue=send)
+        return last
 
     def _preprocess(self, obs):
         if self.preprocess_buffer:
-            return self.preprocess_fn(obs)
-        return obs
-
-    def preprocess(self, obs):
-        if not self.preprocess_buffer:
-            return self.preprocess_fn(obs)
+            return self.preprocess(obs)["image"]
         return obs
 
     def add_worker_info(self, out: StateDict):
@@ -376,52 +371,44 @@ class Environment(BaseMP):
     def last(self, n: int):
         return self.add_worker_info(self.buffer.last(n).format_out())
 
-    def _check(self):
+    def _step(self):
         stop_next_iter = False
 
-        if self._requested_items == 0:
-            self.reinitialize(send=True)
-
-        if not self.is_mp and self.is_val and self.done:
+        if self.is_val and self.done:
             stop_next_iter = True
 
-        if (
-            self.is_mp
-            and self._requested_items % self.required_batch_size == 0
-            and self._requested_items != 0
-        ):
-            try:
-                remaining = 1
-                while remaining > 0:
-                    self.info("Waiting for action")
-                    action, remaining = self._agent2env.get(timeout=self.timeout)
-                    self.info(f"Got {action=}, {remaining=}")
-                    transition = self.step(action, send=True)
-                    stop_next_iter |= bool(transition[-2])
-                    self.info(f"Transition {transition[-2]}")
-
-                    if self.is_val and stop_next_iter:
-                        # Stop the next iteration if the environment is done and in val
-                        break
-            except queue.Empty as e:
-                self.error(
-                    "Queue is empty.",
-                    self,
-                    f" {self._requested_items=}, {self.done=}, {self._lifetime=}, {self._steps_without_different_action=}",
-                )
-                raise e
-
         self._requested_items += 1
-        self.info(f"Requested {self._requested_items} items. Done ? {stop_next_iter}")
         return stop_next_iter
 
-    def _poll(self): ...
+    def iteration_loop(self):
+        """The threaded iteration loop that is in charge of interacting with the environment"""
+        while True:
+            self._interact_ready.clear()  # Block execution
+            self._poll()
+            self._interact_ready.set()  # Free execution
+
+    def _poll(self):
+        """Poll the agent2env queue for actions and make a step in the environment"""
+        try:
+            remaining = 1
+            while remaining > 0:
+                action, remaining = self._agent2env.get(timeout=self.timeout)
+                self.step(action, queue=True)
+        except queue.Empty as e:
+            self.error(
+                "Queue is empty.",
+                self,
+                f" {self._requested_items=}, {self.done=}, {self._lifetime=}, {self._steps_without_different_action=}",
+            )
+            raise e
 
 
 class ValEnvironment(Environment, IterableDataset):
     _stop_next_iter: bool = False
+    """Whether to stop the next iteration or not. Used to send the last transition before stopping"""
 
     def __iter__(self):
+        self.reinitialize()
         return self
 
     def __next__(self):
@@ -430,23 +417,32 @@ class ValEnvironment(Environment, IterableDataset):
             self.warn(
                 f"Stopped at lifetime {self._lifetime}, requested {self._requested_items} items"
             )
-            # Next turn will call the reinitialize
-            self._requested_items = 0
             raise StopIteration
 
-        self._stop_next_iter = self._poll()
+        if self.is_mp and self._requested_items > 0:
+            self._interact_ready.wait()
 
+        self._stop_next_iter = self._step()
         return self.last(self.history)
 
 
 class TrainEnvironment(Environment, Dataset):
     def __getitem__(self, _):
         """We don't care about the index since we manually sample the data"""
-        self._poll()
+        if (
+            self.is_mp
+            and self._requested_items > 0
+            and self._requested_items % self.required_batch_size == 0
+            and not self.is_epoch_first_request
+        ):
+            # Wait in case interactions haven't finished from previous epoch
+            self._interact_ready.wait()
+
+        self._step()
         return self.sample()
 
     def __len__(self):
-        return self.total_steps * self.required_batch_size
+        return self.total_steps * self.required_batch_size * max(1, self.num_workers)
 
 
 class EnvironmentDataset(BaseDataset):
@@ -471,6 +467,8 @@ class EnvironmentDataset(BaseDataset):
     """Batch size for the dataloader"""
     steps: int = -1
     """Number of steps in the environment per epoch"""
+    num_workers: int = 0
+    """Number of workers used for the dataloader"""
 
     @classmethod
     def get_identifiers(cls):
@@ -480,6 +478,7 @@ class EnvironmentDataset(BaseDataset):
         super().post_config(config)
 
         self.batch_size = config["task"]["datamodule"]["batch_size"]
+        self.num_workers = config["task"]["datamodule"]["num_workers"]
 
     def prepare(self, run_p: Path):
         train = self.get_train()
@@ -506,6 +505,8 @@ class EnvironmentDataset(BaseDataset):
             max_steps=self.max_steps,
             skips=0 if is_val and not self.skips_in_val else self.skips,
             history=self.history,
+            num_workers=self.num_workers,
+            preprocess=self.modalities,
             **extra,
         )
 

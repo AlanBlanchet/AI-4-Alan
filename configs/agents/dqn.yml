@@ -1,16 +1,17 @@
+# https://arxiv.org/pdf/1312.5602
 merge: datasets/env/breakout.yml
 dataset:
-  steps: 50
+  steps: 250
 task:
   type: rl
   model:
     type: DQN
-    interactions_per_learn: 2
+    interactions_per_learn: 1
   datamodule:
-    num_workers: 2
+    num_workers: 4
     batch_size: 32
 run:
   action: train
   lightning:
     max_epochs: 1000
-  checkpoint: runs/rl/ALE_Breakout-v5/DQN/2/lightning_logs/version_0/checkpoints/epoch=999-step=1000000.ckpt
+  checkpoint: runs/rl/ALE_Breakout-v5/DQN/epoch=184-step=185000.ckpt

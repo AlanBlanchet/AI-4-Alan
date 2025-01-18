@@ -39,10 +39,12 @@ class DQN(Agent):
                 f"Using Double DQN with updates every {self.update_target} steps and tau={self.tau}"
             )
             self.online_policy = deepcopy(self.policy)
+            self.policy.requires_grad_(False)
 
             if self.ddqn_tuned:
                 self.info("Using the tuned version of Double DQN (shared action layer)")
                 self.online_policy.l1 = self.policy.l1
+                self.policy.l1.requires_grad_(True)
         else:
             self.online_policy = self.policy
 
@@ -57,7 +59,7 @@ class DQN(Agent):
 
     def setup_policy(self):
         return DQNPolicy(
-            in_shape=self.active_env.preprocessed_shape,
+            in_shape=self.active_env._preprocessed_shape,
             out_dim=self.active_env.out_action,
             history=self.history,
             last_layer="linear" if not self.recurrent else "lstm",
@@ -109,7 +111,7 @@ class DQN(Agent):
         # The next rewards are not learnable, they are our targets
         with torch.no_grad():
             Q_next, hx1 = self.target_policy(next_obs, hx1)
-            # Long term reward function
+            # Long term reward
             expected_Q = rewards + self.gamma * Q_next.max(dim=-1).values * (1 - dones)
 
         return dict(
@@ -139,13 +141,15 @@ class DQN(Agent):
         if self.update_target and self._train_steps >= self.update_target:
             # We do a soft update to prevent sudden changes
             train_state_dict = self.online_policy.state_dict()
-            target_state_dict = self.target_policy.state_dict()
-            for key in target_state_dict.keys():
-                target_state_dict[key] = (
-                    self.tau * train_state_dict[key]
-                    + (1 - self.tau) * target_state_dict[key]
-                )
-            self.target_policy.load_state_dict(target_state_dict)
+            target_state_dict = self.target_policy.state_dict(keep_vars=True)
+            new_state_dict = {}
+            for key, tensor in target_state_dict.items():
+                # Do not mutate trainable params since it will detach the graph and error in backprop
+                if not tensor.requires_grad:
+                    new_state_dict[key] = (
+                        self.tau * train_state_dict[key] + (1 - self.tau) * tensor
+                    )
+            self.target_policy.load_state_dict(new_state_dict, strict=False)
             self._train_steps = 0
             self._network_syncs += 1
 
@@ -162,7 +166,7 @@ class DRQN(DQN):
     @override
     def setup_policy(self):
         return DQNPolicy(
-            in_shape=self.active_env.preprocessed_shape,
+            in_shape=self.active_env._preprocessed_shape,
             out_dim=self.active_env.out_action,
             history=self.history,
             last_layer="linear" if not self.recurrent else "lstm",

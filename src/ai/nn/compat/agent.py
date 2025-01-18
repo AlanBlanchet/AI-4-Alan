@@ -1,52 +1,64 @@
 from abc import abstractmethod
 from queue import Empty
-from typing import Any, Literal, Mapping, TypeVar
+from typing import Any, Mapping, TypeVar
 
 import numpy as np
 import torch
 import torch.nn as nn
-from pydantic import field_validator
 
 from ...dataset.env import Environment, EnvironmentDataset, StateDict
 from ...dataset.env.queues import RLQueues
 from ...utils.hyperparam import HYPERPARAM, Hyperparam
+from ...utils.pydantic_ import validator
 from .module import Module
 
 T = TypeVar("T")
 
 
 class Agent(Module, buildable=False):
+    """The agent class for reinforcement learning
+
+    The main class that define a model perspective bahaviour of interactions with the environment
+    taking into consideration that we also need to learn from the interactions.
+    """
+
     env: EnvironmentDataset
-    optimizer: Literal["Adam", "RMSprop", "AdamW"] = "RMSProp"
-    lr: float = 1e-3
+    """The environment dataset required in RL
+    
+    WARNING: The value of the env is only in the main process and not in the workers
+    """
+    # optimizer: Literal["Adam", "RMSprop", "AdamW"] = "RMSProp"
+
     gamma: float = 0.99
+    """Discount factor"""
     epsilon: HYPERPARAM = Hyperparam(start=0.9, end=0.1)
+    """Epsilon greedy parameter"""
     batch_size: int = 32
+    """Batch size for learning"""
     history: int = 4
+    """Number of history to take into consideration"""
     reward_shaping: bool = True
+    """Whether to shape the rewards"""
     interactions_per_learn: int = 1
-    policy: nn.Module = None
+    """Number of interactions per forward cycle"""
+    policy: Module = None
+    """The policy network for making actions"""
 
     queues: Any | RLQueues
+    """Way of communicating with the environment"""
 
     _env_info: dict[str, Any] = {}
+    """Information about the environment"""
     _current_env: Environment = None
+    """The current environment (train or eval env)"""
     _states = []
     _lifetime = 0
+    """The lifetime of the agent"""
     _requires_merge: bool = False
-    # _remaining_val_queues: list[int] = []
     _queue_idx: int = 0
+    """The currrent index of the queue the agent is interacting with"""
 
-    @field_validator("policy", mode="before")
-    def validate_policy(cls, value, values):
-        if value is None:
-            return None
-        elif isinstance(value, nn.Module):
-            return value
-        elif isinstance(value, dict):
-            return Module.from_config(value)
-
-    @field_validator("history", mode="before")
+    @validator("history")
     def validate_history(cls, value, values):
         history = max(value, 1)
         if len(values["env"].preprocessed_shape) <= 1:
@@ -60,10 +72,6 @@ class Agent(Module, buildable=False):
             if self.training
             else self.queues.val_test[self._queue_idx]
         )
-
-    def set_batch_worker_idx(self, batch: dict):
-        if self.is_mp:
-            self._queue_idx = batch["worker"][-1].item()
 
     @property
     def active_env(self):
@@ -91,18 +99,15 @@ class Agent(Module, buildable=False):
         if self.policy is None:
             self.policy = self.setup_policy()
 
+    def set_batch_worker_idx(self, batch: dict):
+        if self.is_mp:
+            self._queue_idx = batch["worker"][-1].item()
+
     @Module.watch
     def _get_state(self) -> StateDict:
         if self.is_mp:
             try:
-                self.info("QUEUE", self._queue_idx)
-                self.info(
-                    "Q",
-                    self.queue.agent2env.qsize(),
-                    self.queue.env2agent.qsize(),
-                )
-                state, self._env_info = self.queue.env2agent.get(timeout=1)
-                self.info("QUEUE RECEIVED", state["done"])
+                state, self._env_info = self.queue.env2agent.get(timeout=2)
             except Empty as e:
                 self.error(f"Queue {self._queue_idx} timed out", e)
                 raise e
@@ -113,7 +118,6 @@ class Agent(Module, buildable=False):
 
     def _send_act(self, action: np.ndarray, remaining: int):
         if self.is_mp:
-            self.info(f"SENDING {self._queue_idx=}", action, remaining)
             self.queue.agent2env.put((action, remaining), timeout=1)
         else:
             self.active_env.step(action)
@@ -130,12 +134,12 @@ class Agent(Module, buildable=False):
             done = bool(state["done"][-1].item())
 
             if not self.training and rem == interactions - 1:
-                assert torch.isclose(
-                    batch["obs"][-1].cpu(), state["obs"]
-                ).all(), "Queue is not in sync for validation"
+                assert torch.isclose(batch["obs"][-1].cpu(), state["obs"]).all(), (
+                    "Queue is not in sync for validation"
+                )
 
             # Preprocess the observations
-            obs = self.active_env.preprocess(obs)
+            obs = self.active_env.preprocess(obs)["image"]
 
             # FIXME putting this in the forward might not be the best idea
             # It will take time to put on the device
@@ -152,13 +156,7 @@ class Agent(Module, buildable=False):
 
             if not self.training and done:
                 # We also neeed to break in eval to prevent looping even if we are done
-                self.info("BREAKING BAD")
                 break
-
-        if self.is_mp:
-            self.info(
-                f"{self.queue.agent2env.qsize()=} {self.queue.env2agent.qsize()=}"
-            )
 
     @property
     def num_queues(self):
@@ -235,10 +233,6 @@ class Agent(Module, buildable=False):
 
     def memorize(self, memo: dict):
         self.active_env.buffer.memorize(memo)
-
-    @property
-    def device(self):
-        return next(self.parameters()).device
 
     def optimize(
         self,

@@ -1,40 +1,77 @@
 from __future__ import annotations
 
 import json
+import random
 import shutil
 from abc import abstractmethod
 from functools import cached_property
 from pathlib import Path
-from typing import ClassVar, Literal, override
+from typing import Any, ClassVar, Literal, Optional, override
 
 import numpy as np
+import plotly.express as px
 import torch
+import torch.optim as optim
 import yaml
 from lightning import LightningModule
+from lightning.pytorch.core.saving import _default_map_location
+from lightning.pytorch.utilities.migration import pl_legacy_patch
+from lightning.pytorch.utilities.migration.utils import _pl_migrate_checkpoint
 from pydantic import computed_field, field_validator
+from torch.optim.lr_scheduler import ExponentialLR
 
-from ..configs import ActionEnum, Color
+from ..configs.log import Color
+from ..dataset.base_dataset import BaseDataset
+from ..dataset.collator.mask import masked_collator
 from ..nn import *  # noqa
-from ..nn.compat.module import ModuleConfig
-from ..nn.compat.pretrained import PretrainedConfig
+from ..nn.compat.module import Module, ModuleConfig
+from ..nn.compat.pretrained import Pretrained, PretrainedConfig
+from ..train.datamodule import AIDataModule
 from ..utils.env import AIEnv
-from .metrics import GroupedMetric, Metric
-from .trainer import TaskModule
+from ..utils.func import create_path
+from ..utils.pydantic_ import validator
+from .metrics import EmptyMetric, GroupedMetric
 
 TASK_TYPE = Literal["binary", "multiclass", "multilabel"]
 
 
-class EmptyMetric(Metric):
-    def update(self, *args, **kwargs): ...
+PL_MODULE_KEYS = dir(LightningModule)
+PL_MODULE_KEYS.remove("forward")
 
-    def compute(self, **kwargs):
-        return {}
+# Define all keys used inside the init functions of the PL Module and bases
+# For the nn.Module, we were able to get these from the type hints
+# With LightningModule, these aren't present and created on the fly in the __init__
+PL_MODULE_KEYS.extend(
+    [
+        "_log_hyperparams",
+        "prepare_data_per_node",
+        "allow_zero_length_dataloader_with_multiple_devices",
+        "_dtype",
+        "_device",
+        "_auto_choose_log_on_epoch",
+        "_example_input_array",
+        "_trainer",
+        "_example_input_array",
+        "_automatic_optimization",
+        "_strict_loading",
+        "_current_fx_name",
+        "_param_requires_grad_state",
+        "_metric_attributes",
+        "_compiler_ctx",
+        "_fabric",
+        "_fabric_optimizers",
+        "_device_mesh",
+    ]
+)
 
 
-class Task(TaskModule, buildable=False):
+class Task(Module, LightningModule, buildable=False):
+    INIT_CLS: ClassVar[type] = LightningModule
+    BASE_SPECIAL_KEYS: ClassVar[list[str]] = PL_MODULE_KEYS
+
     log_name: ClassVar[str] = "task"
     color: ClassVar[str] = Color.magenta
-    alias: ClassVar[str]
+    alias: ClassVar[Optional[str]] = None
 
     metrics: GroupedMetric = GroupedMetric(
         lambda: EmptyMetric(),
@@ -44,10 +81,36 @@ class Task(TaskModule, buildable=False):
 
     val_only_metrics: bool = False
 
+    dataset: BaseDataset
+    """The dataset used for the task. Is required to be defined before model"""
+    datamodule: AIDataModule
+    """The datamodule used for the task."""
+    model: Module
+    """The model used for the task. Is required to be defined after dataset"""
+
+    @validator("datamodule")
+    def validate_datamodule(cls, v, values):
+        return AIDataModule(dataset=values["dataset"], **v)
+
+    @validator("model")
+    def validate_model(cls, value, values):
+        config = {**value, **cls.model_kwargs(values)}
+        return Module.from_config(config)
+
+    @classmethod
+    def load_from_checkpoint(cls, **kwargs):
+        """Remove the original method for loading checkpoints since it doesn't allow loading directly from instance"""
+        raise NotImplementedError("Use the `load` method instead")
+
+    @classmethod
+    def log_extras(cls):
+        return ""
+
     @override
     @classmethod
     def get_identifiers(cls):
-        return super().get_identifiers() | {cls.alias}
+        alias = {cls.alias} if cls.alias else set()
+        return super().get_identifiers() | alias
 
     @classmethod
     def all_names(self):
@@ -71,12 +134,8 @@ class Task(TaskModule, buildable=False):
         return self.__class__.__name__
 
     @property
-    def metric_params(self):
-        return self.params.get("metrics", {})
-
-    @property
-    def task_action(self):
-        return self.root_config.run.action == ActionEnum.fit
+    def config(self):
+        return self.root_config
 
     # TODO: fix this to be on each subclass
     @property
@@ -96,18 +155,10 @@ class Task(TaskModule, buildable=False):
             / self.dataset.name.replace("/", "_")
             / self.model.__class__.__name__
         )
-        run_p = self._create_path(run_p)
+        run_p = create_path(run_p)
         run_p.mkdir(exist_ok=True, parents=True)
         self.info(f"Setting run path to {run_p}")
         return run_p
-
-    def init(self):
-        super().init()
-        # Move the logs to the run path
-        shutil.move(AIEnv.tmp_log_p, self.run_p / "log")
-        # Load the dataset
-        self.info(f"Loading {self.spaced_name()} task")
-        self.setup_dataset()
 
     @abstractmethod
     def setup_dataset(self, **kwargs): ...
@@ -118,34 +169,107 @@ class Task(TaskModule, buildable=False):
     @abstractmethod
     def example(self, pred: dict, item: dict, split: str): ...
 
-    def save_config(self):
-        config = self.run_p / "config.yml"
-        dump_config = self.run_p / "dump.yml"
-        config.write_text(yaml.dump(self.root_config.config, sort_keys=False))
-        obj = self.root_config.model_dump(exclude={"config"})
-        try:
-            dump_config.write_text(yaml.dump(obj, sort_keys=False))
-        except Exception as e:
-            self.error(f"Error saving dump config:\n{e}\nTrying to save as json")
-            dump_config.with_suffix(".json").write_text(json.dumps(obj, indent=2))
+    def init(self):
+        super().init()
 
-        self.info(f"Saved configs to \nconfig {config}\ndump {dump_config}")
+        self.log_ = None
 
-    def _create_path(self, path: Path):
-        i = 1
-        p = path / f"{i}"
-        while p.exists():
-            i += 1
-            p = path / f"{i}"
-        return p
+        # if hasattr(task, "logger"):
+        #     self.log_ = task.logger.log
 
-    def map_params(self, item: dict) -> dict:
-        dataset_conf = self.root_config.dataset
-        map = dataset_conf.map_params
-        return self.dataset.parse_items(item, map)
+        self.set_random_example_idx()
 
-    def wrap_output(self, out: dict):
-        return out
+        # Move the logs to the run path
+        shutil.move(AIEnv.tmp_log_p, self.run_p / "log")
+        # Load the dataset
+        self.info(f"Loading {self.spaced_name()} task")
+        self.setup_dataset()
+
+    def setup(self, stage):
+        if isinstance(self.model, Pretrained):
+            ex = self.dataset.example
+            items = masked_collator([ex])
+            input = self.dataset.extract_inputs(items)
+            self.model.init_weights(*input)
+
+        return super().setup(stage)
+
+    def model_parameters(self):
+        return self.model.parameters()
+
+    def log(self, name: str, value: Any, prog_bar: bool = False):
+        # Override for custom logger
+        if isinstance(value, torch.Tensor) and (value.ndim == 0 or value.numel() == 1):
+            self.INIT_CLS.log(self, name, value, prog_bar=prog_bar, sync_dist=True)
+        elif self.log_ is not None:
+            self.log_(name, value, prog_bar=prog_bar)
+
+    def forward(self, x):
+        if isinstance(x, list):
+            return self.model(*x)
+        return self.model(x)
+
+    def training_step(self, batch, batch_idx):
+        return self.step(batch, batch_idx, "train", plot_idx=self.random_train_idx)
+
+    def validation_step(self, batch, batch_idx=None):
+        return self.step(batch, batch_idx, "val", plot_idx=self.random_val_idx)
+
+    def step(self, batch, batch_idx: int, split: str, plot_idx: list[int] = None):
+        # Get the possible item to show as example
+        example_item_idx = (
+            None if (plot_idx is None or plot_idx[0] != batch_idx) else plot_idx[1]
+        )
+        # Process the batch
+        losses = self.process(
+            model=self, batch=batch, split=split, item_idx=example_item_idx
+        )
+        # Log the losses
+        for k, v in losses.items():
+            self.log(
+                f"{split}/{k}",
+                v,
+                prog_bar=split == "train",
+            )
+
+        # Return the losses
+        return losses
+
+    def log_metric(self, metric: dict, split: str):
+        """Logs the metrics to the logger"""
+        for k, v in metric.items():
+            if isinstance(v, dict):
+                v = {f"{k}/{kk}": vv for kk, vv in v.items()}
+                self.log_metric(v, split)
+            elif isinstance(v, torch.Tensor):
+                if v.ndim < 2:
+                    if v.ndim == 1:
+                        v = v.mean()
+
+                    if self.log_ is not None:
+                        self.log_(
+                            k,
+                            v,
+                            logger=True,
+                            prog_bar="training" in k and split == "train",
+                        )
+                    else:
+                        self.log(k, v, prog_bar="training" in k and split == "train")
+                elif v.ndim == 2:
+                    if v.shape[0] == v.shape[1]:
+                        # Supposed to be a confusion matrix
+                        fig = px.imshow(
+                            v.cpu(),
+                            labels=dict(
+                                x="Prediction", y="Ground Truth", color="Score"
+                            ),
+                            x=self.label_map.labels,
+                            y=self.label_map.labels,
+                        )
+                        fig.layout.height = v.shape[-1] * 50
+                        fig.layout.width = v.shape[-1] * 50
+                        if self.log_ is not None:
+                            self.log_(f"{k}", fig)
 
     def process(
         self,
@@ -154,6 +278,7 @@ class Task(TaskModule, buildable=False):
         split: str,
         item_idx: int | None,
     ) -> dict:
+        """Main process function for the task"""
         # Extract model required inputs
         inputs = self.dataset.extract_inputs(batch)
 
@@ -189,12 +314,17 @@ class Task(TaskModule, buildable=False):
                 self._extract_batch_item(batch, item_idx),
                 split,
             )
-        # try:
-        # except Exception as e:
-        #     self.info(f"Error showing example: {e}")
 
         # Return the losses
         return losses
+
+    def wrap_output(self, out: dict):
+        return out
+
+    def map_params(self, item: dict) -> dict:
+        dataset_conf = self.root_config.dataset
+        map = dataset_conf.map_params
+        return self.dataset.parse_items(item, map)
 
     def _extract_batch_item(self, batch: dict, idx: int) -> dict:
         out = {}
@@ -204,6 +334,73 @@ class Task(TaskModule, buildable=False):
             else:
                 out[k] = v
         return out
+
+    def save_config(self):
+        config = self.run_p / "config.yml"
+        dump_config = self.run_p / "dump.yml"
+        config.write_text(yaml.dump(self.root_config.config, sort_keys=False))
+        obj = self.root_config.model_dump(exclude={"config"})
+        try:
+            dump_config.write_text(yaml.dump(obj, sort_keys=False))
+        except Exception as e:
+            self.error(f"Error saving dump config:\n{e}\nTrying to save as json")
+            dump_config.with_suffix(".json").write_text(json.dumps(obj, indent=2))
+
+        self.info(f"Saved configs to \nconfig {config}\ndump {dump_config}")
+
+    def get_random_example_idx(self, dataset):
+        """Returns random example index for the dataset"""
+        if hasattr(dataset, "__len__"):
+            B = self.datamodule.batch_size
+            return (random.randint(0, len(dataset) // B - 1), random.randint(0, B))
+        return None
+
+    def set_random_example_idx(self):
+        """Sets the random example index for the training and validation set"""
+        if self.training:
+            self.random_train_idx = self.get_random_example_idx(
+                self.dataset.get_train()
+            )
+
+        self.random_val_idx = self.get_random_example_idx(self.dataset.get_val())
+
+    def load(self, checkpoint: Path, map_location=None):
+        """Load the checkpoint into the model"""
+        map_location = map_location or _default_map_location
+        with pl_legacy_patch():
+            ckpt = torch.load(checkpoint, map_location=map_location)
+
+        # convert legacy checkpoints to the new format
+        ckpt = _pl_migrate_checkpoint(ckpt, checkpoint_path=checkpoint)
+
+        self.warn("Only loading the state_dict. TODO: Load the full checkpoint")
+        self.load_state_dict(ckpt["state_dict"])
+
+    def epoch_end(self, split: str):
+        metrics = self.metrics.compute(split=split)
+        metrics = {f"{split}/{k}": v for k, v in metrics.items()}
+        self.log_metric(metrics, split)
+
+    def on_train_epoch_start(self) -> None:
+        self.train()
+
+    def on_train_epoch_end(self):
+        if not self.val_only_metrics:
+            self.epoch_end("train")
+
+    def on_validation_epoch_end(self):
+        self.set_random_example_idx()
+        self.epoch_end("val")
+
+    def configure_optimizers(self):
+        opt = optim.AdamW(self.model.parameters(), lr=4e-4)
+        return dict(
+            optimizer=opt,
+            lr_scheduler=dict(
+                scheduler=ExponentialLR(optimizer=opt, gamma=0.995),
+                interval="epoch",
+            ),
+        )
 
 
 class DimensionConfig(ModuleConfig):

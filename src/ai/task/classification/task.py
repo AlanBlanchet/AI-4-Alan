@@ -2,7 +2,6 @@ from functools import cached_property
 from typing import ClassVar
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from pydantic import computed_field
 
@@ -59,17 +58,3 @@ class Classification(Task):
     def example(self, out: dict, item: dict, split: str):
         # TODO implement
         ...
-
-    def process_output(
-        self, model: nn.Module, batch: dict[str, torch.Tensor], split: str
-    ) -> dict:
-        input = batch["input"]
-        labels = batch["labels"]
-
-        out: torch.Tensor = model(input)
-
-        loss = F.cross_entropy(out, labels)
-
-        self.metrics.update(out, labels, split=split)
-
-        return dict(loss=loss)

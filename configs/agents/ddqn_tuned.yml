@@ -1,4 +1,5 @@
-merge: double_dqn.yml
+merge: ddqn.yml
 task:
   model:
-    double_dqn_tuned: true
+    ddqn_tuned: true
+    interactions_per_learn: 1

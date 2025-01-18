@@ -4,15 +4,16 @@ from abc import abstractmethod
 from functools import cached_property
 from typing import Any, ClassVar, Iterable
 
-from pydantic import Field, field_validator
-
 from ..configs.base import Base
 from ..configs.log import Color
 from ..modality import Label
-from ..modality.modality import Modality
+from ..modality.modality import Modalities, Modality
+from ..utils.pydantic_ import validator
 
 
 class DatasetSplitConfig(Base):
+    auto_build = True
+
     name: str = "train"
     size: float = 1.0
 
@@ -25,18 +26,9 @@ class BaseDataset(Base, buildable=False):
 
     params: dict = {}
 
-    modalities: list[Modality] = []
-    train: DatasetSplitConfig = Field(None, validate_default=True)
-    val: DatasetSplitConfig = Field(None, validate_default=True)
-
-    @field_validator("modalities", mode="before")
-    @classmethod
-    def validate_modalities(cls, v: list[dict]):
-        modalities = []
-        for modality in v:
-            modality = Modality.from_config(modality)
-            modalities.append(modality)
-        return modalities
+    modalities: Modalities = Modalities([])
+    train: DatasetSplitConfig
+    val: DatasetSplitConfig
 
     @cached_property
     def _labels(self) -> list[str]: ...
@@ -87,19 +79,13 @@ class BaseDataset(Base, buildable=False):
     @property
     def name() -> str: ...
 
-    @field_validator("train", mode="before")
-    @classmethod
-    def validate_train(cls, v):
-        if v is None:
-            v = {}
-        return DatasetSplitConfig(**v)
-
-    @field_validator("val", mode="before")
-    @classmethod
-    def validate_val(cls, v):
-        if v is None:
-            v = {}
-        return DatasetSplitConfig(**v)
+    @validator("modalities")
+    def validate_modalities(cls, v: list[dict]):
+        modalities = []
+        for modality in v:
+            modality = Modality.from_config(modality)
+            modalities.append(modality)
+        return Modalities(modalities)
 
     @abstractmethod
     def get_train(self, **kwargs) -> Iterable: ...
@@ -180,5 +166,4 @@ class BaseDataset(Base, buildable=False):
     # @property
     @cached_property
     def example(self):
-        ex = next(iter(self.get_val()))
-        return ex
+        return next(iter(self.get_val()))

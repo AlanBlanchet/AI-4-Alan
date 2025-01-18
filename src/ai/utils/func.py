@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Callable, Generator
 
 import numpy as np
@@ -79,3 +80,12 @@ class classproperty:
 
     def __get__(self, instance, owner):
         return self.fget(owner)
+
+
+def create_path(path: Path, prefix="", start=1):
+    i = start
+    p = path / f"{i}"
+    while p.exists():
+        i += 1
+        p = path / f"{i}"
+    return p
