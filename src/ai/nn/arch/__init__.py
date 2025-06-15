@@ -1,13 +1,11 @@
-import glob
-import importlib
-import os
-from pathlib import Path
+from ai.nn.arch.dqn import (DDQN, DQN, DQNConfig, DQNHardUpdate, DQNPolicy,
+                            DRQN, DualDQN,)
+from ai.nn.arch.repvgg import (RepVGG, RepVGGBlock, RepVGG_A,)
+from ai.nn.arch.transformer import (Block, Decoder, DecoderBlock, Encoder,
+                                    MultiHeadAttention, Transformer,)
+from ai.nn.arch.vgg import (VGG,)
 
-# Get the current directory
-current_dir = Path(__file__).parent
-
-# Import all modules
-for module_p in current_dir.iterdir():
-    init_p = module_p / "__init__.py"
-    if init_p.exists():
-        importlib.import_module(f".{module_p.name}", __package__)
+__all__ = ['Block', 'DDQN', 'DQN', 'DQNConfig', 'DQNHardUpdate', 'DQNPolicy',
+           'DRQN', 'Decoder', 'DecoderBlock', 'DualDQN', 'Encoder',
+           'MultiHeadAttention', 'RepVGG', 'RepVGGBlock', 'RepVGG_A',
+           'Transformer', 'VGG']

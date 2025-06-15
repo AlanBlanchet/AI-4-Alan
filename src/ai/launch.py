@@ -1,43 +1,62 @@
 from copy import deepcopy
 from pathlib import Path
 
-from pydantic import Field
-
 from .configs import Base
-from .dataset import BaseDataset
+from .dataset import Dataset, Datasets
 from .task.task import Task
 from .train.runner import Runner
 from .utils.env import AIEnv
-from .utils.pydantic_ import validator
 
 
 class Main(Base):
     config: dict
-    dataset: BaseDataset = Field(None, validate_default=True)
-    task: Task = Field(None, validate_default=True)
-    run: Runner = Field(None, validate_default=True)
+    datasets: Datasets
+    task: Task
+    run: Runner
 
-    @validator("dataset")
-    def validate_dataset(cls, _, values):
-        config = deepcopy(values["config"])
-        return BaseDataset.from_config(config["dataset"], config)
+    @classmethod
+    def configure(self, config):
+        original = deepcopy(config["config"])
+        passed_config = deepcopy(config["config"])
+        config = config["config"]
+        config["config"] = original
+        # Datasets
+        datasets = Dataset.from_config(config["datasets"], passed_config)
+        if not isinstance(datasets, list):
+            datasets = [datasets]
+        config["datasets"] = Datasets(datasets=datasets)
+        # Task
+        config["task"]["datasets"] = config["datasets"]
+        config["task"] = Task.from_config(config["task"], passed_config)
+        # Runner
+        config["run"]["task"] = config["task"]
+        config["run"] = Runner(**config["run"])
+        return config
 
-    @validator("task")
-    def validate_task(cls, _, values):
-        config = deepcopy(values["config"])
-        config["task"]["dataset"] = values["dataset"]
-        return Task.from_config(config["task"], config)
+    # @validator("datasets")
+    # def validate_datasets(cls, _, values):
+    #     config = deepcopy(values["config"])
+    #     datasets = Dataset.from_config(config["datasets"], config)
+    #     if not isinstance(datasets, list):
+    #         datasets = [datasets]
+    #     return Datasets(datasets=datasets)
 
-    @validator("run")
-    def validate_run(cls, _, values):
-        config = deepcopy(values["config"])
-        config["run"]["task"] = values["task"]
-        return Runner(**config["run"])
+    # @validator("task")
+    # def validate_task(cls, _, values):
+    #     config = deepcopy(values["config"])
+    #     config["task"]["datasets"] = values["datasets"]
+    #     return Task.from_config(config["task"], config)
+
+    # @validator("run")
+    # def validate_run(cls, _, values):
+    #     config = deepcopy(values["config"])
+    #     config["run"]["task"] = values["task"]
+    #     return Runner(**config["run"])
 
     def __call__(self):
         # Save this root config in the instances so they can communicate
         self.task._root_config = self
-        self.dataset._root_config = self
+        self.datasets._root_config = self
         self.run._root_config = self
         # Run the pipeline
         self.run()

@@ -1,0 +1,11 @@
+source: hf
+path: Rowan/hellaswag
+inputs:
+  id: ind
+  context: ctx
+  answers: endings
+  label:
+    name: label
+    dtype: int
+val:
+  name: validation

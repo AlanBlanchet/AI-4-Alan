@@ -1,3 +1,3 @@
-from .registry import REGISTER
+from ai.registry.registry import (REGISTER, Registry,)
 
-__all__ = ["REGISTER"]
+__all__ = ['REGISTER', 'Registry']

@@ -3,8 +3,6 @@ from inspect import _empty, signature
 import torch.nn as nn
 from click import Choice, argument, command, option
 
-from ...registry import REGISTER
-
 
 @command("show", help="Show a neural network model")
 @argument("model", type=str)
@@ -43,6 +41,8 @@ def main(model, source: str = None):
 
 
 def get_arch(arch_name: str):
+    from ...registry import REGISTER
+
     arch_cls = REGISTER[arch_name]
 
     if not issubclass(arch_cls, nn.Module):
@@ -62,9 +62,9 @@ def get_arch(arch_name: str):
 
         annot = v.annotation
 
-        if annot == str:
+        if isinstance(annot, str):
             arg_prep.append("x")
-        elif annot == bool:
+        elif isinstance(annot, bool):
             arg_prep.append(True)
         else:
             arg_prep.append(1)

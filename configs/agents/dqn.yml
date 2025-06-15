@@ -10,8 +10,11 @@ task:
   datamodule:
     num_workers: 4
     batch_size: 32
+  optimizer:
+    type: RMSprop
+
 run:
   action: train
   lightning:
     max_epochs: 1000
-  checkpoint: runs/rl/ALE_Breakout-v5/DQN/epoch=184-step=185000.ckpt
+  checkpoint: runs/rl/ALE_Breakout-v5/DDQN/epoch=744-step=745000.ckpt

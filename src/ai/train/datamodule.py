@@ -4,14 +4,15 @@ from typing import Optional
 
 import lightning as pl
 from lightning import LightningDataModule
-from pydantic import Field, computed_field, field_validator
+from pydantic import Field, computed_field
 from torch.utils.data import DataLoader
 
 from ..configs.base import Base
 from ..configs.log import Color
-from ..dataset.base_dataset import BaseDataset
-from ..dataset.collator.mask import masked_collator
+from ..dataset.dataset import Datasets
+from ..modality.modality import Modality
 from ..utils.env import AIEnv
+from ..utils.pydantic_ import validator
 
 EXTRA_DM_KEYS = [
     "trainer",
@@ -23,7 +24,7 @@ EXTRA_DM_KEYS = [
 ]
 
 
-class AIDataModule(Base, LightningDataModule):
+class DataModule(Base, LightningDataModule):
     model_config = {"arbitrary_types_allowed": True, "extra": "allow"}
 
     log_name = "datamodule"
@@ -36,12 +37,12 @@ class AIDataModule(Base, LightningDataModule):
     allow_zero_length_dataloader_with_multiple_devices: bool = False
 
     # Real fields
-    dataset: BaseDataset
+    datasets: Datasets
 
     num_workers: int = AIEnv.DEFAULT_NUM_PROC
     pin_memory: bool = True
     batch_size: int = 1
-    val_batch_size: int = None
+    val_batch_size: int = Field(None, validate_default=True)
     prefetch_factor: Optional[int] = Field(None, validate_default=True)
     val_prefetch_factor: Optional[int] = Field(None, validate_default=True)
     worker_init_fn: Optional[callable] = None
@@ -50,24 +51,21 @@ class AIDataModule(Base, LightningDataModule):
     _train_dataloader: Optional[DataLoader] = None
     _val_dataloader: Optional[DataLoader] = None
 
-    @field_validator("val_batch_size", mode="before")
-    @classmethod
+    @validator("val_batch_size")
     def validate_val_batch_size(cls, v, others):
         if v is None:
-            return others.data["batch_size"]
+            return others["batch_size"]
         return v
 
-    @field_validator("prefetch_factor", mode="before")
-    @classmethod
+    @validator("prefetch_factor")
     def validate_prefetch_factor(cls, v, others):
-        if v is None and others.data["num_workers"] > 0:
+        if v is None and others["num_workers"] > 0:
             return 2
         return None
 
-    @field_validator("val_prefetch_factor", mode="before")
-    @classmethod
+    @validator("val_prefetch_factor")
     def validate_val_prefetch_factor(cls, v, others):
-        if others.data["num_workers"] == 0:
+        if others["num_workers"] == 0:
             return None
         return v
 
@@ -78,7 +76,7 @@ class AIDataModule(Base, LightningDataModule):
 
     @property
     def necessary_params(self):
-        return dict(collate_fn=masked_collator)
+        return dict(collate_fn=Modality.collate)
 
     @property
     def real_params(self):
@@ -98,14 +96,14 @@ class AIDataModule(Base, LightningDataModule):
             batch_size=self.batch_size,
             shuffle=self.train_shuffle,
             prefetch_factor=self.prefetch_factor,
-            dataset=self.dataset.get_train(),
+            dataset=self.datasets[0].get_train(),
         )
         self._val_dataloader = DataLoader(
             **self.real_params,
             **self.necessary_params,
             batch_size=self.val_batch_size,
             prefetch_factor=self.val_prefetch_factor,
-            dataset=self.dataset.get_val(),
+            dataset=self.datasets[0].get_val(),
         )
 
     def train_dataloader(self):

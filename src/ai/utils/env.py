@@ -21,7 +21,9 @@ class AIEnv:
 
     ai_p = root_p / "src/ai"
     archs_p = ai_p / "nn/arch"
+    tasks_p = ai_p / "task"
     configs_p = root_p / "configs"
+    docs_p = root_p / "docs"
 
     DEFAULT_NUM_PROC = max(2, os.cpu_count() - 2)
 

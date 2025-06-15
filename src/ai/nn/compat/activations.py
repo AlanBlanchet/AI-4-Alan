@@ -32,4 +32,6 @@ ACTIVATIONS_NAMES = [
 class Activation(Module, buildable=False): ...
 
 
-Activation.create_classes(globals(), nn, ACTIVATIONS_NAMES)
+Activation.create_classes(
+    namespace=globals(), module=nn, selected_names=ACTIVATIONS_NAMES
+)

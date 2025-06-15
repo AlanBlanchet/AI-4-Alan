@@ -1,3 +1,3 @@
-from .mlp import LMLP, MLP
+from ai.nn.basic.mlp.mlp import (LMLP, MLP,)
 
-__all__ = ["LMLP", "MLP"]
+__all__ = ['LMLP', 'MLP']

@@ -11,13 +11,14 @@ from typing import Optional
 import numpy as np
 import torch
 from gymnasium.spaces import Discrete
-from torch.utils.data import Dataset, IterableDataset
+from torch.utils.data import Dataset as TorchDataset
+from torch.utils.data import IterableDataset
 
 from ...configs.base import BaseMP
 from ...configs.log import Color
 from ...modality.modality import Modalities
 from ...utils.func import TensorInfo
-from ..base_dataset import BaseDataset
+from ..dataset import Dataset, Datasets
 from .adapter import AdaptedEnv
 from .buffer import ReplayBuffer
 from .queues import SplitQueue
@@ -426,7 +427,7 @@ class ValEnvironment(Environment, IterableDataset):
         return self.last(self.history)
 
 
-class TrainEnvironment(Environment, Dataset):
+class TrainEnvironment(Environment, TorchDataset):
     def __getitem__(self, _):
         """We don't care about the index since we manually sample the data"""
         if (
@@ -445,7 +446,7 @@ class TrainEnvironment(Environment, Dataset):
         return self.total_steps * self.required_batch_size * max(1, self.num_workers)
 
 
-class EnvironmentDataset(BaseDataset):
+class EnvironmentDataset(Dataset):
     """Environment that acts as a dataset
 
     This dataset constructs the environments (train and val) and provides the data to the agent
@@ -538,3 +539,6 @@ class EnvironmentDataset(BaseDataset):
 
     def extract_inputs(self, item: dict) -> dict:
         return item
+
+
+class EnvironmentDatasets(Datasets): ...

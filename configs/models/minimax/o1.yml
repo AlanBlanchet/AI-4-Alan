@@ -1,0 +1,14 @@
+task:
+  type: qa
+  answers: endings
+  model:
+    type: hf
+    path: google-t5/t5-small
+  tokenizer:
+    sos_name: decoder_input_ids
+datasets:
+  - file: datasets/hellaswag.yml
+    expose:
+      context: input_ids
+      context_mask: attention_mask
+# - file: datasets/openbookqa.yml

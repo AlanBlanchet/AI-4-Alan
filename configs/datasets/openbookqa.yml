@@ -1,0 +1,6 @@
+source: hf
+path: allenai/openbookqa
+input: question_stem
+labels: answerKey
+val:
+  name: validation

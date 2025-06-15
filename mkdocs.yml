@@ -1,0 +1,24 @@
+site_name: AI Docs
+use_directory_urls: false
+
+theme:
+  name: material
+
+plugins:
+  - search
+  - gen-files:
+      scripts:
+        - docs/gen_reference_nav.py
+  - literate-nav
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: ["src"]
+          docstring_style: google
+          options:
+            extensions:
+              - griffe_fieldz:
+  - autorefs
+nav:
+  - Home: index.md
+  - Reference: reference/

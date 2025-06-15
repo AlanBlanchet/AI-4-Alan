@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 from functools import cached_property
 from inspect import signature
+from itertools import chain
 from typing import Any, Callable, ClassVar, Mapping, dataclass_transform
 
 import numpy as np
@@ -15,6 +16,7 @@ from pydantic.fields import Field as PydanticModelField
 from pydantic.fields import PrivateAttr as PydanticModelPrivateAttr
 
 from ...configs import Base, Color
+from ...configs.external_base import ExternalBase
 from ..fusion.fuse import FusedModule
 
 BASE_MODULE_KEYS = dir(Base)
@@ -23,14 +25,15 @@ NN_MODULE_KEYS = dir(nn.Module)
 NN_MODULE_KEYS.remove("forward")
 
 NN_MODULE_ANNOTATIONS = set(nn.Module.__annotations__.keys())
-NN_MODULE_ANNOTATIONS.remove("forward")
+if "forward" in NN_MODULE_ANNOTATIONS:
+    NN_MODULE_ANNOTATIONS.remove("forward")
 
 
 @dataclass_transform(
     kw_only_default=True,
     field_specifiers=(PydanticModelField, PydanticModelPrivateAttr, NoInitField),
 )
-class PydanticRemoveNNModuleForwardAnnotation(ModelMetaclass):
+class _PydanticRemoveNNModuleForwardAnnotation(ModelMetaclass):
     """
     This class only serves to trick pydantic into not parsing the annotations in nn.Modules
 
@@ -77,14 +80,16 @@ class PydanticRemoveNNModuleForwardAnnotation(ModelMetaclass):
 
 
 class Module(
-    Base, nn.Module, buildable=False, metaclass=PydanticRemoveNNModuleForwardAnnotation
+    ExternalBase,
+    nn.Module,
+    buildable=False,
+    metaclass=_PydanticRemoveNNModuleForwardAnnotation,
 ):
     """A pydantic compatible nn.Module"""
 
     model_config = {"arbitrary_types_allowed": True, "extra": "allow"}
 
-    INIT_CLS: ClassVar[type] = nn.Module
-    BASE_SPECIAL_KEYS: ClassVar[list[str]] = NN_MODULE_KEYS
+    BASE_REMOVE_KEYS: ClassVar[list[str]] = ["forward"]
 
     log_name = "module"
     color: ClassVar[str] = Color.blue
@@ -212,70 +217,61 @@ class Module(
 
     @property
     def device(self):
-        return next(self.parameters()).device
-
-    def __init__(self, **kwargs):
-        # First initialize the nn.Module
-        self.INIT_CLS.__init__(self)
-        # Copy the current state (modules, buffers, parameters...)
-        original_nn_state = self.__dict__.copy()
-
-        # Initialize model
-        # This erases the state but we need it in the post_init !
-        # This is why we saved it in original_nn_state
-        super().__init__(**kwargs)
-        # Restore the state
-        self.__dict__.update(original_nn_state)
-
-        attrs = self.__dict__.copy()
-        # Use the setattr method on nn.Module to use its logic
-        for k, v in attrs.items():
-            if isinstance(v, nn.Module):
-                nn.Module.__setattr__(self, k, v)
-
-        self.__dict__["__cached_properties__"] = {}
-        for k in dir(self.__class__):
-            v = getattr(self.__class__, k)
-            if isinstance(v, cached_property):
-                self.__cached_properties__[k] = v
-
-        self.init()
-
-    def __init_subclass__(cls, **kwargs):
-        if not cls.model_post_init.__module__.startswith("pydantic"):
-            # User has defined a model_post_init method
-            raise ValueError(
-                f"model_post_init is a reserved method for Pydantic Modules {cls.__name__}. Please use the init instead."
-            )
-        return super().__init_subclass__(**kwargs)
+        params = self.parameters()
+        buffers = self.buffers()
+        gen = chain(params, buffers)
+        try:
+            next(gen).device
+        except StopIteration:
+            return torch.device("cpu")
 
     def init(self):
         """
         Initialize the model
         """
+        super().init()
         for k, field in self.model_computed_fields.items():
             unwrapped = field.wrapped_property.fget(self)
-            if k in self.BASE_SPECIAL_KEYS or isinstance(unwrapped, nn.Module):
+            if k in self._XT_SPECIAL_KEYS or isinstance(unwrapped, nn.Module):
                 raise ValueError(
                     f"Do not use any form of caching for Modules with pydantic. '{k}' is a Module",
                     "Caching prevents nn.Module from accessing it's 'real' modules from _modules, _buffers and _parameters when changing device",
                 )
 
+    def pydantic_post_init(self, pydantic_state, xt_state):
+        """For modules we need to set the state after the pydantic init for it to
+        go through the nn.Module's __setattr__ method and register as module, parameter or buffer
+        """
+        for k, v in pydantic_state.items():
+            if isinstance(v, nn.Module):
+                setattr(self, k, v)
+
+    def should_go_to_xt_state(self, name, value):
+        if isinstance(value, nn.Module):
+            return True
+        return super().should_go_to_xt_state(name, value)
+
     def __repr__(self):
         """Use nn.Module's __repr__ explicitly"""
         return self.INIT_CLS.__repr__(self)
 
-    def __setattr__(self, name, value):
-        if name in self.BASE_SPECIAL_KEYS or isinstance(value, self.INIT_CLS):
-            self.INIT_CLS.__setattr__(self, name, value)
-        else:
-            super().__setattr__(name, value)
+    def __str__(self):
+        return self.INIT_CLS.__str__(self)
 
-    def __getattr__(self, name):
-        try:
-            return self.INIT_CLS.__getattr__(self, name)
-        except AttributeError:
-            return super().__getattr__(name)
+    def extra_repr(self):
+        def _get_src(obj, cached=False):
+            elems = []
+            for k, v in obj.items():
+                if isinstance(v, cached_property):
+                    v = f"{v.__get__(self)}"
+                    k = f"{k} (cached)"
+
+                elems.append(f"{k}: {v}")
+            return elems
+
+        mods = _get_src(self.model_dump(exclude_none=True, exclude_defaults=True))
+        mods.extend(_get_src(self.__cached_properties__))
+        return "\n".join(mods)
 
     def module_by_name(self, name: str):
         """
@@ -336,11 +332,27 @@ class Module(
     #     """
     #     return self.forward_info(self, self.forward_args)
 
+    @classmethod
+    def create_classes(
+        cls,
+        *,
+        namespace: dict[str, Any],
+        module: type,
+        selected_names: list[str] = None,
+        required_base: type = nn.Module,
+    ):
+        super().create_classes(
+            namespace=namespace,
+            module=module,
+            selected_names=selected_names,
+            required_base=required_base,
+        )
+
     def __hash__(self):
         return id(self)
 
 
-Module.create_classes(globals(), nn.modules)
+Module.create_classes(namespace=globals(), module=nn.modules)
 
 
 class ModuleConfig(Base):
@@ -367,3 +379,23 @@ class ModuleConfig(Base):
         always_merger.merge(merged, kwargs)
 
         return self.__class__(**merged)
+
+
+if __name__ == "__main__":
+
+    class TestModule(Module):
+        def init(self):
+            self.linear = nn.Linear(1, 10)
+
+        @cached_property
+        def test_cache(self):
+            return 1
+
+        def forward(self, x):
+            return self.linear(x)
+
+    module = TestModule()
+
+    print(module.test_cache)
+
+    print(module)

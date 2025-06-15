@@ -1,3 +1,3 @@
-from .layer import Layer, LLayer
+from ai.nn.basic.layer.layer import (LLayer, Layer,)
 
-__all__ = ["Layer", "LLayer"]
+__all__ = ['LLayer', 'Layer']

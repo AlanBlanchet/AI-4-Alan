@@ -2,22 +2,12 @@ from typing import Literal
 
 import numpy as np
 import torchvision.transforms.functional as TF
-from pydantic import field_validator
 
-from ...configs.base import Base
-from ...utils.types import CallableList
-
-
-class ImageAugmentation(Base, buildable=False):
-    def __call__(self, *args, **kwargs):
-        print(args, kwargs)
+from ...utils.pydantic_ import validator
+from ..preprocess import Preprocess
 
 
-class Augmentations(CallableList):
-    def __call__(self, input):
-        for aug in self:
-            input = aug(input)
-        return input
+class ImageAugmentation(Preprocess, buildable=False): ...
 
 
 class Crop(ImageAugmentation):
@@ -28,8 +18,7 @@ class Crop(ImageAugmentation):
     mode: Literal["center", "random"] = "center"
     """Mode of cropping"""
 
-    @field_validator("size", mode="before")
-    @classmethod
+    @validator("size")
     def validate_size(cls, value):
         if isinstance(value, int):
             return (value, value)
@@ -52,7 +41,7 @@ class Crop(ImageAugmentation):
 class PadCrop(ImageAugmentation):
     size: tuple[int, int, int, int]
 
-    @field_validator("size", mode="before")
+    @validator("size")
     def validate_size(cls, value):
         if isinstance(value, int):
             return (value, value, value, value)

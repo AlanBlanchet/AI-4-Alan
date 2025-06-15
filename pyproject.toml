@@ -43,6 +43,18 @@ dependencies = [
     "torchmetrics>=1.4.2",
     "torchvision>=0.19.1",
     "transformers>=4.44.2",
+    "griffe-pydantic>=1.1.0",
+    "mkdocs-material>=9.5.50",
+    "mkdocs>=1.6.1",
+    "mkdocstrings-python>=1.13.0",
+    "griffe-fieldz>=0.2.1",
+    "mkdocstrings>=0.27.0",
+    "griffe>=1.5.5",
+    "mkdocs-gen-files>=0.5.0",
+    "mkdocs-literate-nav>=0.6.1",
+    "mkinit>=1.1.0",
+    "awkward>=2.7.4",
+    "pandoc>=2.4",
 ]
 
 [tool.ruff.lint.per-file-ignores]

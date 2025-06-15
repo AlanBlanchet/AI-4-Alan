@@ -7,11 +7,11 @@ from lightning.pytorch.loops.fetchers import _PrefetchDataFetcher
 from torch.utils.data import get_worker_info
 from torchvision.utils import save_image
 
-from ...dataset.env.environment import EnvironmentDataset
+from ...dataset.env.environment import EnvironmentDatasets
 from ...dataset.env.queues import RLQueues
-from ...train.datamodule import AIDataModule
+from ...train.datamodule import DataModule
 from ...utils.pydantic_ import validator
-from ..metrics import GroupedMetric
+from ..metrics import Metrics
 from ..task import Task
 from .metrics import RLMetric
 
@@ -21,11 +21,11 @@ class ReinforcementLearning(Task):
     _queues: ClassVar[RLQueues] = None
     """Queues for communication between the environment and the agent"""
 
-    dataset: EnvironmentDataset
+    datasets: EnvironmentDatasets
     """For RL, we specifically use an EnvironmentDataset"""
-    metrics: GroupedMetric = GroupedMetric(
-        lambda: RLMetric(["reward", "memory", "epsilon"]),
-        ["train", "val"],
+    metrics: Metrics = Metrics(
+        metric=lambda: RLMetric(["reward", "memory", "epsilon"]),
+        groups=["train", "val"],
     )
     """RL tasks have their own metrics"""
 
@@ -38,7 +38,7 @@ class ReinforcementLearning(Task):
 
         ctx = mp.get_context("fork")
         cls._queues = RLQueues(ctx=ctx, num_workers=value["num_workers"])
-        return AIDataModule(
+        return DataModule(
             dataset=values["dataset"], **{**value, **cls.datamodule_kwargs()}
         )
 
@@ -68,6 +68,7 @@ class ReinforcementLearning(Task):
         dataset.init_worker(worker_id, split_queue)
 
     def init(self):
+        super().init()
         # Patch the data fetcher in the EvalLoop to use our custom one
         # This prevents double fetching at the start which we don't want
 

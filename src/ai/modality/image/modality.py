@@ -12,36 +12,14 @@ from albumentations import (
 from albumentations import Resize as AResize
 from albumentations.pytorch import ToTensorV2
 from PIL import Image as PImage
-from pydantic import field_validator
 from torchvision.utils import draw_bounding_boxes
 
 from ...utils.augmentations import AUGS
 from ..modality import Modality
-from .augmentations import Augmentations, ImageAugmentation
 
 
 class Image(Modality):
-    augmentations: Augmentations
-
     input: list[str] = "image"
-
-    @field_validator("augmentations", mode="before")
-    @classmethod
-    def validate_augmentations(cls, value):
-        real_list = []
-        for v in value:
-            if isinstance(v, str):
-                real_list.append({"type": v})
-            elif isinstance(v, dict):
-                if "type" not in v:
-                    v["type"] = list(v.keys())[0]
-                    poped_val = v.pop(v["type"])
-                    v["_args"] = (poped_val,)
-                real_list.append(v)
-            else:
-                real_list.append(v)
-
-        return ImageAugmentation.from_config(real_list)
 
     # @field_validator("image", mode="before")
     # def validate_image(cls, value):
@@ -91,7 +69,7 @@ class Image(Modality):
             val=Compose([unnorm]),
         )
 
-    def preprocess(self, image, bboxes=None, labels=None):
+    def _preprocess(self, image, bboxes=None, labels=None):
         image = torch.as_tensor(image)
 
         # Validation / Formatting
@@ -310,4 +288,4 @@ class Image(Modality):
         return out
 
     def __call__(self, *args, **kwargs):
-        return self.preprocess(*args, **kwargs)
+        return self._preprocess(*args, **kwargs)

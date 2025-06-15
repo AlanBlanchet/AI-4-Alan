@@ -3,7 +3,7 @@ from typing import ClassVar
 
 from ...modality.image import Image
 from ..classification.task import Classification
-from ..metrics import GroupedMetric
+from ..metrics import Metrics
 from .metrics import DetectionMetrics
 
 
@@ -12,7 +12,7 @@ class Detection(Classification):
 
     @cached_property
     def metrics(self):
-        return GroupedMetric(
+        return Metrics(
             lambda: DetectionMetrics(num_classes=len(self.label_map)),
             ["train", "val"],
         )
@@ -31,11 +31,11 @@ class Detection(Classification):
         pred = self.threshold(out)
 
         # Postprocess the input to retrieve the original image
-        item = self.dataset.image_modality.postprocess(item, split)
+        item = self.datasets.image_modality.postprocess(item, split)
 
         # Plot the image
         Image.plot(
-            path=self.run_p / f"{item["id"].item()}_{split}.png",
+            path=self.run_p / f"{item['id'].item()}_{split}.png",
             image=item["image"],
             bbox=pred["bbox"],
             labels=self.label_map[pred["labels"]],

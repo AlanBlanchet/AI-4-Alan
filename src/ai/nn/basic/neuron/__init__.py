@@ -1,3 +1,3 @@
-from .neuron import LNeuron, Neuron
+from ai.nn.basic.neuron.neuron import (LNeuron, Neuron, WeightException,)
 
-__all__ = ["Neuron", "LNeuron"]
+__all__ = ['LNeuron', 'Neuron', 'WeightException']

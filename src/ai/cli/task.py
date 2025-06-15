@@ -4,8 +4,6 @@ from click import UNPROCESSED
 from click import Path as CPath
 from click_extra import argument, extra_command
 
-from ..utils.env import AIEnv
-
 
 @extra_command(
     params=None,
@@ -19,6 +17,7 @@ from ..utils.env import AIEnv
 def main(action: str, config: Path, args: list[str]):
     """Launch a task from a config file."""
     from ..launch import run_task
+    from ..utils.env import AIEnv
 
     extra_params = AIEnv.parse_extra_args(*args, f"run.action={action}")
     run_task(config, extra_params=extra_params)

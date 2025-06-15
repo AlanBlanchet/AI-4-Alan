@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from pydantic import computed_field
 
 from ...dataset.label_map import LabelMap
-from ..metrics import GroupedMetric
+from ..metrics import Metrics
 from ..task import TASK_TYPE, Task
 from .metrics import ClassificationMetrics
 
@@ -21,17 +21,17 @@ class Classification(Task):
     @cached_property
     def label_map(self):
         self.info("Creating label map")
-        return LabelMap(labels=self.dataset._labels)
+        return LabelMap(labels=self.datasets._labels)
 
     @cached_property
     def metrics(self):
-        return GroupedMetric(
+        return Metrics(
             lambda: ClassificationMetrics(num_classes=len(self.label_map)),
             ["train", "val"],
         )
 
     def setup_dataset(self, **kwargs):
-        self.dataset.prepare(label_map=self.label_map)
+        self.datasets.prepare(label_map=self.label_map)
 
     def default_loss(self, out: dict, batch: dict) -> dict:
         return F.cross_entropy(out["logits"], batch["labels"])

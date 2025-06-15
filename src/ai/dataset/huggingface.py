@@ -1,40 +1,54 @@
 from functools import cache, cached_property
-from typing import Any, Callable, Type
+from typing import Callable, Type
 
 import torch
 from datasets import (
     ClassLabel,
-    Dataset,
     Features,
     IterableDataset,
     Sequence,
     load_dataset,
 )
+from datasets import (
+    Dataset as HFDataset,
+)
 
 from ..utils.env import AIEnv
-from .base_dataset import BaseDataset, DatasetSplitConfig
+from .dataset import Dataset, DatasetSplitConfig, InputInfo
 from .label_map import LabelMap
 
 
-class HuggingFaceDataset(BaseDataset):
-    input: str | list[str] | dict[str, Any]
+class HuggingFaceDataset(Dataset):
+    path: str
+    params: dict = {}
+
+    @classmethod
+    def get_identifiers(cls):
+        return super().get_identifiers() | {"hf"}
 
     @cached_property
     def name(self) -> str:
-        return self.config.dataset.params["path"]
+        return self.path
 
     @cached_property
-    def _hf_dataset(self) -> Dataset:
-        params = self.config.dataset.params
-        path = params["path"]
+    def _hf_dataset(self) -> HFDataset:
+        path = self.path
         self.log(f"Loading dataset {path}")
-        ds = load_dataset(**params, trust_remote_code=True)
+        ds = load_dataset(**self.params, path=path, trust_remote_code=True)
         self.log(f"Available splits: {list(ds.keys())}")
         return ds
 
     @cached_property
     def _hf_features(self) -> Features:
         return self._hf_dataset["train"].features
+
+    @cached_property
+    def _hf_class_label(self) -> tuple[str, ClassLabel]:
+        return self._hf_find_field(self._hf_features, field_type=ClassLabel)
+
+    @cached_property
+    def _labels(self):
+        return self._hf_class_label[-1]._int2str
 
     def _hf_find_field(
         self,
@@ -71,14 +85,6 @@ class HuggingFaceDataset(BaseDataset):
         if field_type:
             raise ValueError(f"Field of type {field_type} not found in dataset")
         raise ValueError("No field or field_type provided")
-
-    @cached_property
-    def _hf_class_label(self) -> tuple[str, ClassLabel]:
-        return self._hf_find_field(self._hf_features, field_type=ClassLabel)
-
-    @cached_property
-    def _labels(self):
-        return self._hf_class_label[-1]._int2str
 
     def prepare(self, label_map: LabelMap = None):
         if label_map and not label_map.keep_order:
@@ -118,12 +124,12 @@ class HuggingFaceDataset(BaseDataset):
         first_k = list(self._hf_dataset.keys())[0]
         return self._hf_dataset[first_k].info.splits[name]
 
-    def resolve_ids(self, dataset: Dataset, split: str):
+    def resolve_ids(self, dataset: HFDataset, split: str):
         """
         Tries to get a valid field as id or creates a custom id
         """
         for name in dataset.column_names:
-            if "id" in name:
+            if "id" in name and "int" in dataset.features[name].dtype:
                 # Use this column as id
                 dataset = dataset.rename_column(name, "id")
                 self.log(f"Using '{name}' as id column for '{split}' split")
@@ -161,11 +167,11 @@ class HuggingFaceDataset(BaseDataset):
 
     @cache
     def get_train(self):
-        return self.resolve_split(self.config.dataset.train, "train")
+        return self.resolve_split(self.train, "train")
 
     @cache
     def get_val(self):
-        return self.resolve_split(self.config.dataset.val, "val")
+        return self.resolve_split(self.val, "val")
 
     def _parse_item(self, item, key):
         key = key.split(".")
@@ -174,11 +180,11 @@ class HuggingFaceDataset(BaseDataset):
             return self._parse_item(elem, ".".join(key[1:]))
         return elem.copy()
 
-    def parse_items(self, item, map):
+    def parse_items(self, item, map: dict[str, InputInfo]):
         items = {}
         for k, v in map.items():
             try:
-                items[k] = self._parse_item(item, v)
+                items[k] = self._parse_item(item, v.name)
             except KeyError as e:
                 raise KeyError(
                     f"Key '{v}' not found. Possible keys are {item.keys()}"
@@ -195,7 +201,7 @@ class HuggingFaceDataset(BaseDataset):
 class HuggingFaceTorchDataset(torch.utils.data.Dataset):
     def __init__(
         self,
-        dataset: Dataset | IterableDataset,
+        dataset: HFDataset | IterableDataset,
         item_process: Callable,
     ):
         self.dataset = dataset

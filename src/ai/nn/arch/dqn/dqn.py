@@ -72,29 +72,14 @@ class DQN(Agent):
         return self.policy
 
     def learn(self, batch: dict):
-        # state = self.sample(
-        #     self.config.batch_size,
-        #     self.history,
-        #     priority="p" if self.config.per else None,
-        # )
-
         obs, actions, rewards, dones, _, next_obs, *_ = tuple(batch.values())
 
         hx0, hx1 = None, None
-        # h0, c0, h1, c1 = None, None, None, None
-        # if self.recurrent:
-        #     # (B, ...)
-        #     h0, c0, h1, c1 = state[["h0", "c0", "h1", "c1"]]
-        #     h0 = h0[..., 0, :].unsqueeze(dim=0).detach()
-        #     c0 = c0[..., 0, :].unsqueeze(dim=0).detach()
-        #     h1 = h1[..., 0, :].unsqueeze(dim=0).detach()
-        #     c1 = c1[..., 0, :].unsqueeze(dim=0).detach()
 
         # (B, T, ...) -> (B, ...)
         rewards = rewards[..., -1]
         dones = dones[..., -1]
         actions = actions[..., -1, :]
-        # idx = idx[..., -1]
 
         # Reward shaping
         if self.reward_shaping:

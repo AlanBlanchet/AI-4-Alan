@@ -1,16 +1,15 @@
+from functools import cached_property
 from typing import Callable, ClassVar
 
 import torch
-import torch.nn as nn
 import torchmetrics
 
 from ..nn.compat.module import Module
 
-METRIC_MODULE_KEYS = dir(torchmetrics.Metric)
-METRIC_MODULE_KEYS.remove("forward")
 
-METRIC_MODULE_KEYS.extend(
-    [
+class Metric(Module, torchmetrics.Metric, buildable=False):
+    XT_REMOVE_KEYS: ClassVar[list[str]] = ["forward"]
+    XT_ADD_KEYS: ClassVar[list[str]] = [
         "_TORCH_GREATER_EQUAL_2_1",
         "_device",
         "_dtype",
@@ -37,26 +36,15 @@ METRIC_MODULE_KEYS.extend(
         "_is_synced",
         "_cache",
     ]
-)
 
 
-class Metric(Module, torchmetrics.Metric, buildable=False):
-    INIT_CLS: ClassVar[type] = torchmetrics.Metric
-    BASE_SPECIAL_KEYS: ClassVar[list[str]] = METRIC_MODULE_KEYS
+class Metrics(Metric):
+    metric: Callable[[], Module]
+    groups: list[str]
 
-
-class GroupedMetric(nn.Module):
-    def __init__(
-        self,
-        metric: Callable[[], nn.Module],
-        groups: list[str],
-    ):
-        super().__init__()
-        self.groups = groups
-        self.metrics = {k: metric() for k in groups}
-
-        for k in groups:
-            setattr(self, k, self.metrics[k])
+    @cached_property
+    def metrics(self):
+        return {g: self.metric() for g in self.groups}
 
     def has_updated(self, split):
         return self.metrics[split]._has_updated
