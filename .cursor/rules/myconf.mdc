@@ -1,0 +1,22 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+- We have access and can modify the myconf code for myconf. The code is linked (with the ln linux command)
+- Please assess the responsability of myconf and our current module everytime.
+    - We should always update the code more generally if possible in myconf before doing it in our current codebase
+- myconf imports in the ai package should always be absolute
+- myconf has it's own sets of rules :
+    We are building a pydantic alternative.
+    Goal is to make the code as generic as possible. We are pushing the limits so that no variable, function, piece of code is duplicated anywhere.
+    - Make sure the package is isolated from any other source in our code. We should not hard-code behaviours for the ai package. Make generic code.
+    - We are inspiring ourselves from the pydantic code
+    - We are building objects from the type hints if we have access
+    - Never add any form of comments
+    - Never edit the tests if not explicitely told to
+    - For tests you think are worth it, place them in the root test folder so they can be ran with pytest.
+    - The code is independant from torch. But we're building it for torch. There should be not specific code for torch or nn.Modules in myconf
+    - You will not be able to view type hints form the IDE with the inspect module.
+    - MyConf makes every variable automatically parsed relative to type hint. Do not manually parse to the wanted type in the methods
+    - The user should never have to redefine a __init__ manually when inheriting from MyConf

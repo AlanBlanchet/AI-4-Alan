@@ -9,14 +9,14 @@ from pprint import pformat
 from typing import Any, ClassVar, Literal
 
 from devtools import pformat as pydantic_pformat
-from pydantic import BaseModel, PrivateAttr
+from myconf import MyConf
+from pydantic import BaseModel
 from rich.console import Console
 
 from ..utils.env import AIEnv
-from ..utils.func import classproperty
 
 
-class Color(BaseModel):
+class Color(MyConf):
     black: ClassVar[str] = "\x1b[30m"
     red: ClassVar[str] = "\x1b[31m"
     green: ClassVar[str] = "\x1b[32m"
@@ -36,16 +36,14 @@ class Color(BaseModel):
 LOG = Path("log")
 
 
-class Loggable(BaseModel):
-    model_config = {"ignored_types": (classproperty,)}
-
+class LoggableMixin(MyConf):
     log_name: ClassVar[str] = "main"
     """The name to use when calling the log function"""
     color: ClassVar[str] = Color.white
     """Chose a color to use when printing"""
 
-    _logged_once = []
-    _logger: ClassVar[Logger] = PrivateAttr(None)
+    _logged_once: ClassVar[list[str]] = []
+    _logger: ClassVar[Logger] = None
     _loggers: ClassVar[set[Logger]] = set()
 
     def __init_subclass__(cls, **kwargs):
@@ -158,45 +156,45 @@ class Loggable(BaseModel):
         return ""
 
     @classmethod
-    def debug(cls, *msg: list[Any]):
+    def log_debug(cls, *msg: list[Any]):
         cls._logger.debug(cls._resolve_msg(msg))
 
     @classmethod
-    def info(cls, *msg: list[Any]):
+    def log_info(cls, *msg: list[Any]):
         cls._logger.info(cls._resolve_msg(msg))
 
     @classmethod
-    def warn(cls, *msg: list[Any]):
+    def log_warn(cls, *msg: list[Any]):
         cls._logger.warning(cls._resolve_msg(msg))
 
     @classmethod
-    def error(cls, *msg: list[Any]):
+    def log_error(cls, *msg: list[Any]):
         cls._logger.error(cls._resolve_msg(msg))
 
     @classmethod
-    def log(cls, *msg: list[Any], type: Literal["err", "warn", "info"] = "info"):
+    def log_msg(cls, *msg: list[Any], type: Literal["err", "warn", "info"] = "info"):
         if type == "err":
-            cls.error(*msg)
+            cls.log_error(*msg)
         elif type == "warn":
-            cls.warn(*msg)
-        cls.info(*msg)
+            cls.log_warn(*msg)
+        cls.log_info(*msg)
 
     @classmethod
     @cache
-    def log_once(cls, *msg: list[Any]):
-        cls.info(*msg)
+    def log_msg_once(cls, *msg: list[Any]):
+        cls.log_info(*msg)
 
     @classmethod
     @cache
-    def warn_once(cls, *msg: list[Any]):
-        cls.warn(*msg)
+    def log_warn_once(cls, *msg: list[Any]):
+        cls.log_warn(*msg)
 
     @classmethod
     def log_table(cls, table, width=100):
         console = Console(file=io.StringIO(), width=width)
         console.print(table)
         output = console.file.getvalue()
-        cls.info(output, table=True)
+        cls.log_info(output, table=True)
 
     @classmethod
     def watch(cls, *args, **fn_kwargs):
@@ -207,7 +205,7 @@ class Loggable(BaseModel):
                 try:
                     return func(*args, **kwargs)
                 except Exception as e:
-                    cls.error(str(e))
+                    cls.log_error(str(e))
                     raise e
 
             return wrapper
@@ -216,4 +214,4 @@ class Loggable(BaseModel):
 
 
 # Define the main logger on loggable
-Loggable._logger = Loggable._configure_new_logger()
+LoggableMixin._logger = LoggableMixin._configure_new_logger()

@@ -4,11 +4,9 @@ from .modality import Modality
 
 
 class Label(Modality):
-    labels: dict
-
     @classmethod
     def single_process(cls, data: dict[str, torch.Tensor], multiple=False):
-        cls.log_once("Processing labels")
+        cls.log_msg_once("Processing labels")
         labels = data["labels"]
         # Process labels
         labels = torch.as_tensor(labels)
@@ -18,7 +16,7 @@ class Label(Modality):
                     raise ValueError(
                         f"Multiple labels found {map['input']} -> {labels.shape}"
                     )
-                cls.log_once(
+                cls.log_msg_once(
                     "Multiple labels found, taking the first one since we don't accept multiple labels"
                 )
                 # If there are multiple labels, take the first one

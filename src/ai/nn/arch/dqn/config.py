@@ -2,7 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel, field_validator
 
-from ....dataset.env.environment import EnvironmentDataset
+from ....data.env.environment import EnvironmentDataset
 from ....utils.hyperparam import HYPERPARAM, Hyperparam
 
 

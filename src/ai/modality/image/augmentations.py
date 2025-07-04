@@ -3,11 +3,11 @@ from typing import Literal
 import numpy as np
 import torchvision.transforms.functional as TF
 
-from ...utils.pydantic_ import validator
 from ..preprocess import Preprocess
 
 
-class ImageAugmentation(Preprocess, buildable=False): ...
+class ImageAugmentation(Preprocess):  # buildable=False removed for now
+    ...
 
 
 class Crop(ImageAugmentation):
@@ -18,7 +18,6 @@ class Crop(ImageAugmentation):
     mode: Literal["center", "random"] = "center"
     """Mode of cropping"""
 
-    @validator("size")
     def validate_size(cls, value):
         if isinstance(value, int):
             return (value, value)
@@ -41,7 +40,6 @@ class Crop(ImageAugmentation):
 class PadCrop(ImageAugmentation):
     size: tuple[int, int, int, int]
 
-    @validator("size")
     def validate_size(cls, value):
         if isinstance(value, int):
             return (value, value, value, value)

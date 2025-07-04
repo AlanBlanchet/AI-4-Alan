@@ -1,37 +1,18 @@
 import torch.nn as nn
 
-from ..compat.module import Module
-
-ACTIVATIONS_NAMES = [
-    "ReLU",
-    "Hardtanh",
-    "ReLU6",
-    "Sigmoid",
-    "Tanh",
-    "Softmax",
-    "Softmax2d",
-    "LogSoftmax",
-    "ELU",
-    "SELU",
-    "CELU",
-    "GLU",
-    "GELU",
-    "Hardshrink",
-    "LeakyReLU",
-    "LogSigmoid",
-    "Softplus",
-    "Softshrink",
-    "PReLU",
-    "Softsign",
-    "Softmin",
-    "Tanhshrink",
-    "RReLU",
-]
+from .module import Module
 
 
-class Activation(Module, buildable=False): ...
+class Activation(Module): ...
 
 
-Activation.create_classes(
-    namespace=globals(), module=nn, selected_names=ACTIVATIONS_NAMES
-)
+class ReLU(Activation, nn.ReLU): ...
+
+
+class Hardtanh(Activation, nn.Hardtanh): ...
+
+
+class ReLU6(Activation, nn.ReLU6): ...
+
+
+class Sigmoid(Activation, nn.Sigmoid): ...

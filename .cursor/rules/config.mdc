@@ -1,0 +1,12 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+Goal is to make the code as generic as possible. We are pushing the limits so that no variable, function, piece of code is duplicated anywhere.
+- Never add any form of comments
+
+- For tests you think are worth it, place them in the root test folder so they can be ran with pytest.
+- You will not be able to view type hints form the IDE with the inspect module.
+- When you see the you just updated back. It's probably that i rejected it for a good reason
+- If you do need carefully respect the rules, members of your family will be killed and it will be your fault.

@@ -1,58 +1,58 @@
+from typing import ClassVar
+
 import torch.nn as nn
 
-from ....registry import REGISTER
-from ...compat.backbone import Backbone
-from ...compat.merge import SumSequential
-from ...modules import ResidualBlock
+from myconf import F
+from myconf.core import Cast
+
+from ....data.batch import Batch
+from ....data.task.classification import ImageNet1k
+from ....modality.image.modality import ChannelData
+from ...compat.module import Module, ModuleList
+from ...compat.pretrained import HFHubPretrainedWeights, Pretrained
+from ...compat.variants import VariantMixin
+from ...heads.classifier import Classifier
 from ...modules.conv import ConvBlock
-from .configs import ResNetConfig, ResNetLayerConfig
+from ...modules.res import ResidualBlock
+from .configs import Layer
 
 
-@REGISTER
-class ResNet(Backbone):
-    config: ResNetConfig = ResNetConfig
-    default_task = "classification"
+class ResNet(Classifier[ChannelData], Pretrained, VariantMixin):
+    default_data = ImageNet1k()
+    default_mode: ClassVar[Classifier] = Classifier
 
-    def __init__(self, config: ResNetConfig):
-        super().__init__(config)
+    variants: ClassVar[list[str]] = ["18", "34", "50", "101", "152"]
 
-        self.conv1 = ConvBlock(self.in_channels, 64, kernel_size=7, stride=2, padding=3)
+    sources = []
 
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+    layer_config: ClassVar[list[Layer]]
 
-        layers = []
-        in_channels = config.first_layer_channels
-        # Build all the ResNetLayers
-        for i, layer_conf in enumerate(config.layers):
+    input_proj: ConvBlock = F(
+        lambda _: ConvBlock(3, 64, kernel_size=7, stride=2, padding=3)
+    )
+    first_layer_channels: int = 64
+    maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+    layers: ModuleList[Module] = F(lambda self: self.make_layers())
+    out_dim: int = F(lambda self: self.layer_config[-1].out_channels)
+
+    def make_layers(self):
+        layers = ModuleList()
+        in_channels = self.first_layer_channels
+        for i, layer_conf in enumerate(self.layer_config):
             layer = self.make_layer(in_channels, layer_conf, first_layer=i == 0)
             in_channels = layer_conf.out_channels
             layers.append(layer)
-        self.layers = nn.ModuleList(layers)
-
-        # Create a head for the model
-        self.head = SumSequential(
-            nn.AdaptiveAvgPool2d((1, 1)),
-            nn.Flatten(),
-            nn.Linear(config.out_channels, config.num_classes),
-        )
+        return layers
 
     @staticmethod
-    def make_layer(in_channels: int, layer_conf: ResNetLayerConfig, first_layer=False):
-        """
-        We are building a ResNetLayer
-        """
-        layers = []
-
-        # Initialisation
+    def make_layer(in_channels: int, layer_conf: Layer, first_layer=False):
+        layers = ModuleList()
         n, out_channels = layer_conf.num, layer_conf.out_channels
 
-        # Create the blocks inside the ResNetLayer
         for i in range(n):
             shortcut = None
-            # Stride 2 on first block after first layer
             stride = 2 if i == 0 and not first_layer else 1
 
-            # If first block in layer and in_channels != out_channels, downsample
             if i == 0 and in_channels != out_channels:
                 shortcut = ConvBlock(
                     in_channels,
@@ -60,13 +60,13 @@ class ResNet(Backbone):
                     kernel_size=1,
                     stride=stride,
                     bias=False,
-                    activation=None,  # No activation on shortcut
+                    activation=None,
                 )
 
             res_block = ResidualBlock(
                 in_channels,
-                blocks_out_channels=layer_conf.blocks_out_channels,
-                blocks_kernels=layer_conf.blocks_kernel_size,
+                out_channels=layer_conf.blocks_out_channels,
+                kernels=layer_conf.blocks_kernel_size,
                 shortcut=shortcut,
                 stride=stride,
             )
@@ -75,10 +75,10 @@ class ResNet(Backbone):
             # Next block in layer will have the same in_channels as the previous block
             in_channels = out_channels
 
-        return nn.ModuleList(layers)
+        return layers
 
-    def features(self, x):
-        x = self.conv1(x)
+    def features(self, x: Cast[ChannelData, Batch[ChannelData]]):
+        x = self.input_proj(x.data)
         x = self.maxpool(x)
 
         feats = []
@@ -86,31 +86,66 @@ class ResNet(Backbone):
             for block in layer:
                 x = block(x)
 
-            # Store the feature map of the layer
             feats.append(x)
 
         return feats
 
-    def forward(self, x):
-        feats = self.features(x)
-        return self.head(feats[-1])
-
 
 class ResNet18(ResNet):
-    variant = "18"
+    variant: ClassVar[str] = "18"
+    layer_config: ClassVar[list[Layer]] = [
+        [[[64, 3], [64, 3]], 2],
+        [[[128, 3], [128, 3]], 2],
+        [[[256, 3], [256, 3]], 2],
+        [[[512, 3], [512, 3]], 2],
+    ]
+
+    available_weights = [HFHubPretrainedWeights(ImageNet1k, "microsoft/resnet-18")]
 
 
 class ResNet34(ResNet):
-    variant = "34"
+    variant: ClassVar[str] = "34"
+    layer_config: ClassVar[list[Layer]] = [
+        [[[64, 3], [64, 3]], 3],
+        [[[128, 3], [128, 3]], 4],
+        [[[256, 3], [256, 3]], 6],
+        [[[512, 3], [512, 3]], 3],
+    ]
+
+    available_weights = [HFHubPretrainedWeights(ImageNet1k, "timm/resnet34.a1_in1k")]
 
 
 class ResNet50(ResNet):
-    variant = "50"
+    variant: ClassVar[str] = "50"
+    layer_config: ClassVar[list[Layer]] = [
+        [[[64, 1], [64, 3], [256, 1]], 3],
+        [[[128, 1], [128, 3], [512, 1]], 4],
+        [[[256, 1], [256, 3], [1024, 1]], 6],
+        [[[512, 1], [512, 3], [2048, 1]], 3],
+    ]
+
+    available_weights = [HFHubPretrainedWeights(ImageNet1k, "microsoft/resnet-50")]
 
 
 class ResNet101(ResNet):
-    variant = "101"
+    variant: ClassVar[str] = "101"
+    layer_config: ClassVar[list[Layer]] = [
+        [[[64, 1], [64, 3], [256, 1]], 3],
+        [[[128, 1], [128, 3], [512, 1]], 4],
+        [[[256, 1], [256, 3], [1024, 1]], 23],
+        [[[512, 1], [512, 3], [2048, 1]], 3],
+    ]
+
+    available_weights = [HFHubPretrainedWeights(ImageNet1k, "microsoft/resnet-101")]
 
 
 class ResNet152(ResNet):
-    variant = "152"
+    variant: ClassVar[str] = "152"
+    layer_config: ClassVar[list[Layer]] = [
+        [[[64, 1], [64, 3], [256, 1]], 3],
+        [[[128, 1], [128, 3], [512, 1]], 8],
+        [[[256, 1], [256, 3], [1024, 1]], 36],
+        [[[512, 1], [512, 3], [2048, 1]], 3],
+    ]
+
+    available_weights = [HFHubPretrainedWeights(ImageNet1k, "microsoft/resnet-152")]

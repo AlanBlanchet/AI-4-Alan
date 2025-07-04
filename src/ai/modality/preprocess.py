@@ -2,7 +2,7 @@ from ..configs.base import Base
 from ..utils.types import CallableList
 
 
-class Preprocess(Base, buildable=False):
+class Preprocess(Base):
     def __call__(self, *args, **kwargs):
         raise NotImplementedError
 

@@ -1,53 +1,30 @@
 from functools import cache
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Optional, final
 
 import torch
 import torch.nested as nested
-from pydantic import Field
 
-from ..configs.base import Base
 from ..configs.log import Color
-from ..utils.pydantic_ import validator
+from ..utils.tensor import TensorBase
 from ..utils.types import CallableList, is_dict, is_number
-from .preprocess import Preprocess, Preprocesses
 
 
-class Modality(Base):
+class Modality(TensorBase):
     log_name: ClassVar[str] = "modality"
     color: ClassVar[str] = Color.red
 
-    input: list[str] = Field([], validate_default=True)
+    @classmethod
+    def modality_format(
+        cls, tensor: torch.Tensor, kwargs: dict[str, Any]
+    ) -> torch.Tensor:
+        return tensor
 
-    preprocesses: Preprocesses = Preprocesses([])
-
-    @validator("input")
-    def validate_input(cls, value):
-        if not isinstance(value, list):
-            return [value]
-        return value
-
-    @validator("preprocesses")
-    def validate_preprocesses(cls, value):
-        real_list = []
-        for v in value:
-            if isinstance(v, str):
-                real_list.append({"type": v})
-            elif isinstance(v, dict):
-                if "type" not in v:
-                    v["type"] = list(v.keys())[0]
-                    poped_val = v.pop(v["type"])
-                    v["_args"] = (poped_val,)
-                real_list.append(v)
-            else:
-                real_list.append(v)
-
-        return Preprocess.from_config(real_list)
-
-    def __call__(self, data: dict):
-        """Calls the preprocess method for accepted inputs"""
-        for k, v in self._gather_accepted(data).items():
-            data[k] = self.preprocesses(v)
-        return data
+    @final
+    @classmethod
+    def tensor_format(
+        cls, tensor: torch.Tensor, kwargs: dict[str, Any]
+    ) -> torch.Tensor:
+        return cls.modality_format(tensor, kwargs)
 
     @classmethod
     @cache
@@ -65,7 +42,6 @@ class Modality(Base):
     @classmethod
     def collate(cls, batch: list):
         collated = {}
-        # modalities = cls.modalities()
         names = batch[0].keys()
         transposed = zip(*[b.values() for b in batch])
         items = {name: samples for name, samples in zip(names, transposed)}
@@ -78,32 +54,64 @@ class Modality(Base):
             elif is_dict(ex):
                 collated[name] = cls.collate(samples)
             else:
-                # masked = cls.mask_collate(name, samples)
                 collated[name] = nested.nested_tensor(samples)
 
         return collated
 
-    @classmethod
-    def mask_collate(cls, name: str, samples: list[Any]):
-        """Generates a mask for the data if necessary"""
-        return nested.nested_tensor(samples)
-        # samples = [torch.as_tensor(s) for s in samples]
 
-        # res = {}
-        # lengths = [len(s) if s.dim != 0 else 0 for s in samples]
-        # max_len = max(lengths)
+class NormalizedModality(Modality):
+    def int(self) -> Modality:
+        """Convert to int dtype - returns Modality since dtype change loses Image specialization"""
+        return Modality._make_subclass_efficient(super().int())
 
-        # elem = torch.zeros(
-        #     (len(samples), max_len, *samples[0].shape[1:]),
-        #     dtype=samples[0].dtype,
-        # )
-        # mask = torch.zeros((len(samples), max_len), dtype=torch.bool)
-        # for i, ln in enumerate(lengths):
-        #     elem[i, :ln] = samples[i]
-        #     mask[i, :ln] = True
-        # res[name] = elem
-        # res[f"{name}_mask"] = mask
-        # return res
+    def float(self) -> Modality:
+        """Convert to float dtype - returns Modality since dtype change loses Image specialization"""
+        return Modality._make_subclass_efficient(super().float())
+
+    def long(self) -> Modality:
+        """Convert to long dtype - returns Modality since dtype change loses Image specialization"""
+        return Modality._make_subclass_efficient(super().long())
+
+    def bool(self) -> Modality:
+        """Convert to bool dtype - returns Modality since dtype change loses Image specialization"""
+        return Modality._make_subclass_efficient(super().bool())
+
+    def short(self) -> Modality:
+        """Convert to short dtype - returns Modality since dtype change loses Image specialization"""
+        return Modality._make_subclass_efficient(super().short())
+
+    def byte(self) -> Modality:
+        """Convert to byte dtype - returns Modality since dtype change loses Image specialization"""
+        return Modality._make_subclass_efficient(super().byte())
+
+    def char(self) -> Modality:
+        """Convert to char dtype - returns Modality since dtype change loses Image specialization"""
+        return Modality._make_subclass_efficient(super().char())
+
+    def to(
+        self,
+        dtype: torch.dtype | None = None,
+        non_blocking: bool = False,
+        copy: bool = False,
+        *,
+        memory_format: torch.memory_format | None = None,
+    ) -> Modality:
+        return Modality._make_subclass_efficient(
+            super().to(dtype, non_blocking, copy, memory_format=memory_format)
+        )
+
+    def squeeze(self, dim: Optional[int] = None) -> Modality:
+        """Squeeze tensor - returns Modality since shape change may lose Image semantic meaning"""
+        return Modality._make_subclass_efficient(super().squeeze(dim=dim))
+
+    def unsqueeze(self, dim: int) -> Modality:
+        """Unsqueeze tensor - returns Modality since shape change may lose Image semantic meaning"""
+        return Modality._make_subclass_efficient(super().unsqueeze(dim))
+
+    def flatten(self, start_dim: int = 0, end_dim: int = -1) -> Modality:
+        return Modality._make_subclass_efficient(
+            torch.Tensor.flatten(self, start_dim, end_dim)
+        )
 
 
 class Modalities(CallableList[Modality]):

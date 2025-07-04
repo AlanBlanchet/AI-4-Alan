@@ -10,8 +10,7 @@
       "justMyCode": false,
       "cwd": "${workspaceFolder}",
       "request": "launch",
-      "module": "ai.cli.debug",
-      "args": ["val", "configs/models/minimax/o1.yml"],
+      "module": "ai.cli.run",
       "pythonArgs": ["-Xfrozen_modules=off"],
       "env": {
         "CUDA_VISIBLE_DEVICES": "0"

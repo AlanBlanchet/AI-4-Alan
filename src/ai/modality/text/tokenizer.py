@@ -52,7 +52,7 @@ class HFTokenizer(Tokenizer):
 
     @classmethod
     def configure(cls, config):
-        cls.info("Loading tokenizer")
+        cls.log_info("Loading tokenizer")
         config["tokenizer"] = AutoTokenizer.from_pretrained(config["path"])
         return super().configure(config)
 

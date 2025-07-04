@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from pydantic import BaseModel, Field, field_validator
+from myconf import F
+
+from ..configs.base import Base
 
 
 def parse_hyperparam(v: HYPERPARAM, **kwargs):
@@ -20,23 +22,15 @@ def parse_hyperparam(v: HYPERPARAM, **kwargs):
         raise TypeError(f"Cannot convert {v} to Hyperparam")
 
 
-class Hyperparam(BaseModel):
+class Hyperparam(Base):
     start: float
     end: int | float = 0
     decay: float = 0.995
     steps: int = 5000
 
-    current: float = Field(None, validate_default=True)
-    real_value: float = Field(None, validate_default=True)
+    current: float = F(None)
+    real_value: float = F(None)
     _train: bool = True
-
-    @field_validator("current", mode="before")
-    def validate_current(cls, v, values):
-        return float(v or values.data["start"])
-
-    @field_validator("real_value", mode="before")
-    def validate_real_value(cls, v, values):
-        return float(v or values.data["start"])
 
     def step(self, step=None):
         if step is None:

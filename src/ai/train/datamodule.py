@@ -4,24 +4,14 @@ from typing import Optional
 
 import lightning as pl
 from lightning import LightningDataModule
-from pydantic import Field, computed_field
+from myconf import F
 from torch.utils.data import DataLoader
 
 from ..configs.base import Base
 from ..configs.log import Color
-from ..dataset.dataset import Datasets
+from ..data.dataset import DataList
 from ..modality.modality import Modality
 from ..utils.env import AIEnv
-from ..utils.pydantic_ import validator
-
-EXTRA_DM_KEYS = [
-    "trainer",
-    "_log_hyperparams",
-    "prepare_data_per_node",
-    "allow_zero_length_dataloader_with_multiple_devices",
-    "name",
-    "dataset",
-]
 
 
 class DataModule(Base, LightningDataModule):
@@ -37,39 +27,20 @@ class DataModule(Base, LightningDataModule):
     allow_zero_length_dataloader_with_multiple_devices: bool = False
 
     # Real fields
-    datasets: Datasets
+    datasets: DataList
 
     num_workers: int = AIEnv.DEFAULT_NUM_PROC
     pin_memory: bool = True
     batch_size: int = 1
-    val_batch_size: int = Field(None, validate_default=True)
-    prefetch_factor: Optional[int] = Field(None, validate_default=True)
-    val_prefetch_factor: Optional[int] = Field(None, validate_default=True)
+    val_batch_size: int = F(None)
+    prefetch_factor: Optional[int] = F(None)
+    val_prefetch_factor: Optional[int] = F(None)
     worker_init_fn: Optional[callable] = None
 
     train_shuffle: bool = True
     _train_dataloader: Optional[DataLoader] = None
     _val_dataloader: Optional[DataLoader] = None
 
-    @validator("val_batch_size")
-    def validate_val_batch_size(cls, v, others):
-        if v is None:
-            return others["batch_size"]
-        return v
-
-    @validator("prefetch_factor")
-    def validate_prefetch_factor(cls, v, others):
-        if v is None and others["num_workers"] > 0:
-            return 2
-        return None
-
-    @validator("val_prefetch_factor")
-    def validate_val_prefetch_factor(cls, v, others):
-        if others["num_workers"] == 0:
-            return None
-        return v
-
-    @computed_field
     @property
     def persistent_workers(self) -> bool:
         return self.num_workers > 0
@@ -87,24 +58,22 @@ class DataModule(Base, LightningDataModule):
             worker_init_fn=self.worker_init_fn,
         )
 
-    def model_post_init(self, _):
-        self.info("Using config", self.model_dump(exclude=set(EXTRA_DM_KEYS)))
-
-        self._train_dataloader = DataLoader(
-            **self.real_params,
-            **self.necessary_params,
-            batch_size=self.batch_size,
-            shuffle=self.train_shuffle,
-            prefetch_factor=self.prefetch_factor,
-            dataset=self.datasets[0].get_train(),
-        )
-        self._val_dataloader = DataLoader(
-            **self.real_params,
-            **self.necessary_params,
-            batch_size=self.val_batch_size,
-            prefetch_factor=self.val_prefetch_factor,
-            dataset=self.datasets[0].get_val(),
-        )
+    # def model_post_init(self, _):
+    #     self._train_dataloader = DataLoader(
+    #         **self.real_params,
+    #         **self.necessary_params,
+    #         batch_size=self.batch_size,
+    #         shuffle=self.train_shuffle,
+    #         prefetch_factor=self.prefetch_factor,
+    #         dataset=self.datasets[0].get_train(),
+    #     )
+    #     self._val_dataloader = DataLoader(
+    #         **self.real_params,
+    #         **self.necessary_params,
+    #         batch_size=self.val_batch_size,
+    #         prefetch_factor=self.val_prefetch_factor,
+    #         dataset=self.datasets[0].get_val(),
+    #     )
 
     def train_dataloader(self):
         return self._train_dataloader

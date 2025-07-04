@@ -112,25 +112,3 @@ _configs = {
         "M",
     ],
 }
-
-
-# class VGGConfig(BackboneConfig, ClassificationConfig):
-#     variants = ["16"]
-
-#     pretrained_recommendations = PretrainedConfig.create_recommendations(
-#         "IMAGENET", variants=variants
-#     )
-
-#     in_channels: int = 3
-#     config: list = Field(default=None, validate_default=True)
-
-#     @property
-#     def out_channels(self):
-#         return self.layers[-1].out_channels
-
-#     @field_validator("config", mode="before")
-#     def validate_layers(cls, value, values):
-#         if value is None:
-#             variant = values.data["variant"]
-#             return configs[variant]
-#         return value

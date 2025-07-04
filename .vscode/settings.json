@@ -5,14 +5,16 @@
     "**/.pytest_cache": true,
     "**/test-reports": true,
     "**/*.egg-info": true,
-    "**/.venv": true
+    "**/.venv": true,
+    "**/site": true,
+    "**/docs": true
   },
   "editor.formatOnSave": true,
   "python.analysis.importFormat": "relative",
+  "chat.tools.autoApprove": true,
   "notebook.codeActionsOnSave": {
     "source.organizeImports": "explicit"
   },
-  "jupyter.notebookFileRoot": "${workspaceFolder}",
   "[python]": {
     "editor.defaultFormatter": "charliermarsh.ruff",
     "editor.codeActionsOnSave": {

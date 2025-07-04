@@ -1,6 +1,6 @@
 from typing import Literal
 
-from ....dataset.env.environment import Environment
+from ....data.env.environment import Environment
 from ....utils.hyperparam import HYPERPARAM, Hyperparam
 from ...compat.agent import Agent
 from ..dqn.policy import DQNPolicy

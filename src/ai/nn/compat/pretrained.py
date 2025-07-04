@@ -12,17 +12,56 @@
 # from ..modules import Module
 
 
-from typing import Any, Callable, ClassVar, Literal
+from abc import abstractmethod
+from typing import Any, Callable, ClassVar, Literal, Optional, Self
 
+import torch
 import torch.nn as nn
+from huggingface_hub import hf_hub_download
 from pydantic import BaseModel, field_validator
+from safetensors.torch import load_file
 
-from ...dataset.patches.patch import patch_linear
+from ...configs.base import Base
+from ...data.dataset import Data
+from ...data.patches.patch import patch_linear
 from .module import Module
-from .variants import VariantConfig
+from .variants import VariantMixin
 
 
-class Pretrained: ...
+class PretrainedWeights(Base):
+    on: type[Data]
+
+    @abstractmethod
+    def load(self) -> dict[str, torch.Tensor]: ...
+
+
+class HFHubPretrainedWeights(PretrainedWeights):
+    repo_id: str
+    filename: str = "model.safetensors"
+
+    def load(self) -> dict[str, torch.Tensor]:
+        local_path = hf_hub_download(
+            repo_id=self.repo_id, filename=self.filename, repo_type="model"
+        )
+        state_dict = load_file(local_path)
+        return state_dict
+
+
+class Pretrained(Module):
+    available_weights: ClassVar[list[PretrainedWeights]] = []
+
+    def pretrained(self, weights: Optional[PretrainedWeights] = None) -> Self:
+        if weights is None:
+            if not self.available_weights:
+                self.log_error(
+                    f"No pretrained weights available for {self.__class__.__name__}"
+                )
+                return self
+            weights = self.available_weights[0]
+
+        state_dict = weights.load()
+        self.load_state_dict(state_dict)
+        return self
 
 
 # class Pretrained(Module, buildable=False):
@@ -166,19 +205,6 @@ class Pretrained: ...
 #         ...
 
 
-# class ITimm(ABC):
-#     """
-#     Layer definition for the Timm models
-#     """
-
-#     @abstractmethod
-#     def timm_compat(self) -> dict[str, AnyStr]:
-#         """
-#         Make your model compatible with the Timm models
-#         """
-#         ...
-
-
 # SOURCES = dict(
 #     timm=lambda model_name, **kwargs: create_model(
 #         model_name, pretrained=True, **kwargs
@@ -253,76 +279,80 @@ class PretrainedSourceConfig(BaseModel):
         return value
 
 
-class PretrainedConfig(VariantConfig):
-    pretrained: list[PretrainedSourceConfig] = []
-    pretrained_recommendations: ClassVar[list[PretrainedSourceConfig]] = []
+class PretrainedMixin(VariantMixin):
+    def from_pretrained(self): ...
 
-    @field_validator("pretrained", mode="before")
-    @classmethod
-    def validate_pretrained(cls, value, values):
-        data = values.data
-        variant = data["variant"]
-        if isinstance(value, PretrainedSourceConfig):
-            return [value]
-        elif isinstance(value, str):
-            # TODO change to weights instead of source
-            return [PretrainedSourceConfig(source=value, variant=variant)]
-        elif isinstance(value, dict):
-            return [PretrainedSourceConfig(**value)]
-        elif isinstance(value, bool):
-            if value:
-                return cls.pretrained_for_variant(variant)
-            else:
-                return []
-        # To list
-        if isinstance(value, list):
-            return value
-        return value
 
-    @classmethod
-    def create_recommendations(
-        cls,
-        datasets: list[PretrainedDatasetConfig | str] | str,
-        sources: list[str] | str = None,
-        variants: list[str] | str = None,
-        params: dict = {},
-    ):
-        if sources is None:
-            sources = ["timm", "torch", "torchvision"]
-        elif isinstance(sources, str):
-            sources = [sources]
-        if isinstance(datasets, str):
-            datasets = [datasets]
-        if variants is None:
-            variants = cls.variants
-        elif isinstance(variants, str):
-            variants = [variants]
-        return [
-            PretrainedSourceConfig(
-                variant=variant, source=source, weights=dataset, params=params
-            )
-            for dataset in datasets
-            for source in sources
-            for variant in variants
-        ]
+# class PretrainedConfig(VariantConfig):
+#     pretrained: list[PretrainedSourceConfig] = []
+#     pretrained_recommendations: ClassVar[list[PretrainedSourceConfig]] = []
 
-    @classmethod
-    def pretrained_for_variant(cls, variant: str | None):
-        if variant is None:
-            return cls.pretrained_recommendations
-        return [
-            recommendation
-            for recommendation in cls.pretrained_recommendations
-            if recommendation.variant is None or recommendation.variant == variant
-        ]
+#     @field_validator("pretrained", mode="before")
+#     @classmethod
+#     def validate_pretrained(cls, value, values):
+#         data = values.data
+#         variant = data["variant"]
+#         if isinstance(value, PretrainedSourceConfig):
+#             return [value]
+#         elif isinstance(value, str):
+#             # TODO change to weights instead of source
+#             return [PretrainedSourceConfig(source=value, variant=variant)]
+#         elif isinstance(value, dict):
+#             return [PretrainedSourceConfig(**value)]
+#         elif isinstance(value, bool):
+#             if value:
+#                 return cls.pretrained_for_variant(variant)
+#             else:
+#                 return []
+#         # To list
+#         if isinstance(value, list):
+#             return value
+#         return value
 
-    @classmethod
-    def pretrained_for_dataset(cls):
-        recommended = cls.pretrained_for_variant()
-        if cls.pretrained.weights is None:
-            return recommended
-        return [
-            recommendation
-            for recommendation in recommended
-            if recommendation.weights.dataset == cls.pretrained.weights.dataset
-        ]
+#     @classmethod
+#     def create_recommendations(
+#         cls,
+#         datasets: list[PretrainedDatasetConfig | str] | str,
+#         sources: list[str] | str = None,
+#         variants: list[str] | str = None,
+#         params: dict = {},
+#     ):
+#         if sources is None:
+#             sources = ["timm", "torch", "torchvision"]
+#         elif isinstance(sources, str):
+#             sources = [sources]
+#         if isinstance(datasets, str):
+#             datasets = [datasets]
+#         if variants is None:
+#             variants = cls.variants
+#         elif isinstance(variants, str):
+#             variants = [variants]
+#         return [
+#             PretrainedSourceConfig(
+#                 variant=variant, source=source, weights=dataset, params=params
+#             )
+#             for dataset in datasets
+#             for source in sources
+#             for variant in variants
+#         ]
+
+#     @classmethod
+#     def pretrained_for_variant(cls, variant: str | None):
+#         if variant is None:
+#             return cls.pretrained_recommendations
+#         return [
+#             recommendation
+#             for recommendation in cls.pretrained_recommendations
+#             if recommendation.variant is None or recommendation.variant == variant
+#         ]
+
+#     @classmethod
+#     def pretrained_for_dataset(cls):
+#         recommended = cls.pretrained_for_variant()
+#         if cls.pretrained.weights is None:
+#             return recommended
+#         return [
+#             recommendation
+#             for recommendation in recommended
+#             if recommendation.weights.dataset == cls.pretrained.weights.dataset
+#         ]

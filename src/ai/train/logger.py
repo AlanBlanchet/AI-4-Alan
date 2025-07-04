@@ -35,7 +35,7 @@ class AILogger(Logger, Base):
                     api_token=os.environ["NEPTUNE_API_TOKEN"],
                     **logger,
                 )
-                super().log(f"Added {name} logger with name {self._run_name}")
+                super().log_msg(f"Added {name} logger with name {self._run_name}")
         return loggers
 
     @classmethod
@@ -63,9 +63,9 @@ class AILogger(Logger, Base):
         for k, v in self._loggers.items():
             if k == "neptune":
                 for name, value in metrics.items():
-                    self.log(name, value, step=step, only=k)
+                    self.log_msg(name, value, step=step, only=k)
 
-    def log(self, name: str, value: Any, **kwargs: Any):
+    def log_msg(self, name: str, value: Any, **kwargs: Any):
         only = kwargs.pop("only", None)
         loggers = self._loggers if only is None else {only: self._loggers[only]}
         for k, v in loggers.items():
@@ -76,7 +76,7 @@ class AILogger(Logger, Base):
                     v[name].upload(value)
 
     def __call__(self, *args: Any, **kwds: Any) -> Any:
-        return self.log(*args, **kwds)
+        return self.log_msg(*args, **kwds)
 
     def save(self):
         # Optional. Any code necessary to save logger data goes here

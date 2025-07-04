@@ -1,0 +1,11 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+When wanting to run code. 
+- You will create files in the `examples` dir, then delete the file everytime on code exit after you finished experimenting. Don't delete if you think I would need the file in order to test on my side. You can move the test file to the `test` if you want the behaviour you coded not to regress over time. 
+- Never run inline python (no `uv run python -c "xxx"`)
+- Always run tests when wanting to check if everything works as expected : `uv run pytest`
+- While tests don't pass, you should make fixes. Never leave the user with broken code and tests
+- Make sure at the end that all rules were respected while making the changes. I should not have to repeat rules.

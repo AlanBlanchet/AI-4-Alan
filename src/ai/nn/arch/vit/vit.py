@@ -4,13 +4,13 @@ import torch.nn.functional as F
 from einops import rearrange
 
 from ....registry.registry import REGISTER
-from ...compat.backbone import Backbone
+from ...compat.backbone import IsBackboneMixin
 from ..detr.detr import TransformerLayer
 from .config import ViTConfig
 
 
 @REGISTER
-class ViT(Backbone):
+class ViT(IsBackboneMixin):
     config: ViTConfig = ViTConfig
 
     def __init__(self, config: ViTConfig):

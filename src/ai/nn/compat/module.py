@@ -1,98 +1,158 @@
 from __future__ import annotations
 
 import inspect
-from functools import cached_property
-from inspect import signature
+from collections import defaultdict
 from itertools import chain
-from typing import Any, Callable, ClassVar, Mapping, dataclass_transform
+from typing import Callable, ClassVar, Generic, Mapping, TypeVar
 
-import numpy as np
 import torch
 import torch.nn as nn
-from deepmerge import always_merger
-from pydantic import Field, field_validator
-from pydantic._internal._model_construction import ModelMetaclass, NoInitField
-from pydantic.fields import Field as PydanticModelField
-from pydantic.fields import PrivateAttr as PydanticModelPrivateAttr
 
-from ...configs import Base, Color
-from ...configs.external_base import ExternalBase
+from ...configs.base import Base
 from ..fusion.fuse import FusedModule
 
-BASE_MODULE_KEYS = dir(Base)
-BASE_MODULE_KEYS.remove("__repr__")
-NN_MODULE_KEYS = dir(nn.Module)
-NN_MODULE_KEYS.remove("forward")
 
-NN_MODULE_ANNOTATIONS = set(nn.Module.__annotations__.keys())
-if "forward" in NN_MODULE_ANNOTATIONS:
-    NN_MODULE_ANNOTATIONS.remove("forward")
-
-
-@dataclass_transform(
-    kw_only_default=True,
-    field_specifiers=(PydanticModelField, PydanticModelPrivateAttr, NoInitField),
-)
-class _PydanticRemoveNNModuleForwardAnnotation(ModelMetaclass):
-    """
-    This class only serves to trick pydantic into not parsing the annotations in nn.Modules
-
-    Since the forward method isn't an attribute of nn.Module, we need to remove it from the annotations
-    because pydantic will parse the variable and interpret it as a field.
-
-    Same goes for every other nn.Modules in pytorch.
-    """
-
-    KEYS = NN_MODULE_ANNOTATIONS
-
-    def __new__(
-        mcs,
-        cls_name: str,
-        bases: tuple[type[Any], ...],
-        namespace: dict[str, Any],
-        **kwargs: Any,
-    ):
-        # Remove forward from Pydantic's field parsing
-        for base in bases:
-            split = base.__module__.split(".")
-            package_name = split[0]
-            if package_name == "torch":
-                module_annotations = base.__dict__.get("__annotations__", {})
-                keys = set(module_annotations.keys())
-                # Remove everything concerning nn.Module and keep subclass specifics
-                keys -= mcs.KEYS
-
-                sign = signature(base.__init__)
-                sign = dict(sign.parameters)
-                init_fn_params_list = list(sign.values())[1:]
-                init_fn_params = {p.name: p for p in init_fn_params_list}
-
-                if "forward" in keys:
-                    del module_annotations["forward"]
-                    keys.remove("forward")
-
-                for k in set(keys) & set(init_fn_params):
-                    param = init_fn_params[k]
-                    if param.default != param.empty:
-                        setattr(base, k, param.default)
-
-        return super().__new__(mcs, cls_name, bases, namespace, **kwargs)
-
-
-class Module(
-    ExternalBase,
-    nn.Module,
-    buildable=False,
-    metaclass=_PydanticRemoveNNModuleForwardAnnotation,
-):
+class Module(Base, nn.Module):
     """A pydantic compatible nn.Module"""
 
-    model_config = {"arbitrary_types_allowed": True, "extra": "allow"}
+    log_name: ClassVar[str] = "module"
+    color: ClassVar[str] = "blue"
 
-    BASE_REMOVE_KEYS: ClassVar[list[str]] = ["forward"]
+    def __getattribute__(self, name):
+        """Override to auto-register nn.Module instances on first access"""
+        value = super().__getattribute__(name)
 
-    log_name = "module"
-    color: ClassVar[str] = Color.blue
+        # If this is an nn.Module and we have _modules, register it
+        if (
+            isinstance(value, nn.Module)
+            and hasattr(self, "_modules")
+            and not name.startswith("__")
+            and name not in self._modules
+        ):
+            # Clean up the name for PyTorch registration
+            module_name = name.lstrip("_") or name
+            self._modules[module_name] = value
+
+            # If the module is also a Module class, ensure its modules are registered
+            if hasattr(value, "_ensure_all_modules_registered"):
+                value._ensure_all_modules_registered()
+
+        return value
+
+    def parameters(self, recurse: bool = True):
+        """Override to ensure all F fields are registered before returning parameters"""
+        self._ensure_all_modules_registered()
+        return super().parameters(recurse)
+
+    def named_parameters(
+        self, prefix: str = "", recurse: bool = True, remove_duplicate: bool = True
+    ):
+        """Override to ensure all F fields are registered before returning named parameters"""
+        self._ensure_all_modules_registered()
+        return super().named_parameters(prefix, recurse, remove_duplicate)
+
+    def _ensure_all_modules_registered(self):
+        """Access all F field attributes to trigger registration recursively"""
+        if not hasattr(self, "_myconf_properties"):
+            return
+
+        for prop_name, prop_info in self._myconf_properties.items():
+            # Only check F fields (function-based properties)
+            if hasattr(prop_info, "fn") and prop_info.fn is not None:
+                try:
+                    # Access the attribute to trigger __getattribute__ registration
+                    value = getattr(self, prop_name)
+
+                    # If the value is also a Module, ensure its F fields are registered
+                    if hasattr(value, "_ensure_all_modules_registered"):
+                        value._ensure_all_modules_registered()
+
+                    # If it's a ModuleList, ensure all contained modules are registered
+                    if isinstance(value, nn.ModuleList):
+                        for item in value:
+                            if hasattr(item, "_ensure_all_modules_registered"):
+                                item._ensure_all_modules_registered()
+                            # Also force access to trigger registration in parent
+                            if isinstance(item, nn.Module):
+                                # Force registration by re-accessing nested modules
+                                for name, module in item.named_modules():
+                                    pass  # Accessing triggers registration
+                except (AttributeError, RuntimeError):
+                    # Skip if accessing the attribute fails
+                    pass
+
+    def __setattr__(self, name, value):
+        # Let Base handle its own attribute setting
+        super().__setattr__(name, value)
+
+        # If we're initialized and this is a PyTorch module, register it
+        if (
+            isinstance(value, nn.Module)
+            and not name.startswith("_")
+            and hasattr(self, "_modules")
+        ):
+            self._modules[name] = value
+
+    def __repr__(self):
+        """Smart representation that balances detail and collapsing"""
+        # Get the MyConf properties
+        if not hasattr(self, "_myconf_properties"):
+            return f"{self.__class__.__name__}()"
+
+        # Use annotation order for parameter ordering, like MyConf does
+        annots = getattr(self.__class__, "__annotations__", {})
+        prop_names = [
+            k
+            for k in annots.keys()
+            if k in self._myconf_properties
+            and k not in ("args", "kwargs")
+            and not k.startswith("_")
+        ]
+
+        # Extract only the most important parameters for compact display
+        important_params = []
+        for k in prop_names:
+            info = self._myconf_properties[k]
+
+            # Get the value
+            if hasattr(self, k):
+                v = getattr(self, k)
+            elif hasattr(info, "fn") and info.fn is not None:
+                try:
+                    v = info.fn(self)
+                except:
+                    continue  # Skip if function fails
+            elif hasattr(info, "value") and info.value is not None:
+                v = info.value
+            else:
+                continue
+
+            # Skip empty or default-like values
+            if (
+                hasattr(v, "__class__") and v.__class__.__name__ == "_empty"
+            ) or v is None:
+                continue
+
+            # Skip if this is the default value from the annotation
+            if hasattr(info, "value") and info.value is not None and v == info.value:
+                continue
+
+            # Format value compactly
+            if isinstance(v, list) and len(v) <= 3:
+                # Show short lists inline
+                important_params.append(f"{k}={v}")
+            elif isinstance(v, (int, float, str)) and len(str(v)) <= 10:
+                # Show simple values
+                important_params.append(f"{k}={v}")
+            elif hasattr(v, "__name__"):
+                # Show class names for types/functions
+                important_params.append(f"{k}={v.__name__}")
+            # Skip complex objects to keep compact
+
+        if important_params:
+            return f"{self.__class__.__name__}({', '.join(important_params)})"
+        else:
+            return f"{self.__class__.__name__}()"
 
     @classmethod
     def log_extras(cls):
@@ -167,54 +227,6 @@ class Module(
                 # Attach the new module
                 setattr(parent, mod_name, replace_with)
 
-    @classmethod
-    def forward_info(
-        cls, module: nn.Module, forward_args: list[Any], ignores: list[str] = []
-    ):
-        """
-        We utilize the forward hooks to compute relevant information about the model structure and weights
-        """
-        info = dict(order=[], shape=[], dtype=[], device=[])
-        handles = []
-        # Defined the order of weights from the passed module
-        for k, v in module.named_modules():
-            # Capture k in the closure
-            def _hook(sub: nn.Module, *args, k=k):
-                if isinstance(sub, nn.MultiheadAttention):
-                    # MHA hides parameters
-                    parameters = sub.named_parameters()
-                else:
-                    parameters = sub._parameters.items()
-
-                # Get current module's parameters / buffers
-                for pb, t in list(parameters) + list(sub._buffers.items()):
-                    if t is None:
-                        # Tensor can be None, in that case it will not be in the module state_dict
-                        continue
-
-                    if not any([i in pb for i in ignores]):
-                        # We gather the info
-                        order_name = f"{k}.{pb}" if k != "" else pb
-                        info["order"].append(order_name)
-                        info["shape"].append(t.shape)
-                        info["dtype"].append(t.dtype)
-                        info["device"].append(t.device)
-
-            handles.append(v.register_forward_hook(_hook))
-
-        # Call the hooks
-        module.eval()(*forward_args)
-        # Remove all the hooks
-        for h in handles:
-            h.remove()
-
-        return info  # Order should be filled
-
-    # Prevents training from being in the constructor
-    @property
-    def training(self):
-        return self.INIT_CLS.training
-
     @property
     def device(self):
         params = self.parameters()
@@ -224,54 +236,6 @@ class Module(
             next(gen).device
         except StopIteration:
             return torch.device("cpu")
-
-    def init(self):
-        """
-        Initialize the model
-        """
-        super().init()
-        for k, field in self.model_computed_fields.items():
-            unwrapped = field.wrapped_property.fget(self)
-            if k in self._XT_SPECIAL_KEYS or isinstance(unwrapped, nn.Module):
-                raise ValueError(
-                    f"Do not use any form of caching for Modules with pydantic. '{k}' is a Module",
-                    "Caching prevents nn.Module from accessing it's 'real' modules from _modules, _buffers and _parameters when changing device",
-                )
-
-    def pydantic_post_init(self, pydantic_state, xt_state):
-        """For modules we need to set the state after the pydantic init for it to
-        go through the nn.Module's __setattr__ method and register as module, parameter or buffer
-        """
-        for k, v in pydantic_state.items():
-            if isinstance(v, nn.Module):
-                setattr(self, k, v)
-
-    def should_go_to_xt_state(self, name, value):
-        if isinstance(value, nn.Module):
-            return True
-        return super().should_go_to_xt_state(name, value)
-
-    def __repr__(self):
-        """Use nn.Module's __repr__ explicitly"""
-        return self.INIT_CLS.__repr__(self)
-
-    def __str__(self):
-        return self.INIT_CLS.__str__(self)
-
-    def extra_repr(self):
-        def _get_src(obj, cached=False):
-            elems = []
-            for k, v in obj.items():
-                if isinstance(v, cached_property):
-                    v = f"{v.__get__(self)}"
-                    k = f"{k} (cached)"
-
-                elems.append(f"{k}: {v}")
-            return elems
-
-        mods = _get_src(self.model_dump(exclude_none=True, exclude_defaults=True))
-        mods.extend(_get_src(self.__cached_properties__))
-        return "\n".join(mods)
 
     def module_by_name(self, name: str):
         """
@@ -289,113 +253,157 @@ class Module(
         """
         self._replace_module(self, criteria, other)
 
-    def load_state_dict(
-        self,
-        state_dict: Mapping[str, torch.Tensor],
-        strict: bool = True,
-        assign: bool = False,
-    ):
+    def state_dict(self, destination=None, prefix="", keep_vars=False):
+        """Override to ensure all F fields are registered before returning state dict"""
+        self._ensure_all_modules_registered()
+        return super().state_dict(destination, prefix, keep_vars)
+
+    def load_state_dict(self, state_dict: Mapping[str, torch.Tensor]):
         """
         Load the state dict into the model and try to resolve shape missmatches
         """
-        curr_state_dict = self.state_dict()
-        no_missmatch_state_dict = state_dict.copy()
-        # Iterate on the new values
-        for k, tensor in state_dict.items():
-            if not isinstance(tensor, torch.Tensor):
-                continue
+        curr_groups = defaultdict(list)
+        other_groups = defaultdict(list)
+        curr_state_dict: dict[str, torch.Tensor] = self.state_dict()
 
-            self_tensor = curr_state_dict[k]
-            # Check shape of tensors
-            t_shape = tuple(tensor.shape)
-            s_shape = tuple(self_tensor.shape)
-            if t_shape != s_shape:
-                if np.prod(t_shape) == np.prod(s_shape):
-                    # If the number of elements is the same, we can reshape
-                    self.warn(
-                        f"Resolving shape missmatch - model {s_shape} -> weights {t_shape}"
-                    )
-                    no_missmatch_state_dict[k] = tensor.view_as(self_tensor)
-                else:
-                    self.warn(
-                        f"Removing '{k}' because of shape missmatch - model {s_shape} -> weights {t_shape}"
-                    )
-                    del no_missmatch_state_dict[k]
+        final_state_dict = {}
 
-        self.info("Loading state dict")
-        super().load_state_dict(no_missmatch_state_dict, strict=strict, assign=assign)
+        for kc, vc in curr_state_dict.items():
+            priority1, priority2, priority3 = {}, {}, {}
+            for ko, vo in state_dict.items():
+                if kc == ko:
+                    # TODO check if this can cause problems
+                    priority1[kc] = vo
+                elif vc.shape == vo.shape:
+                    priority2[kc] = vo
+                elif vc.numel() == vo.numel():
+                    priority3[kc] = vo
 
-    # @cached_property
-    # def memoized_forward_info(self):
-    #     """
-    #     Get the forward information
-    #     """
-    #     return self.forward_info(self, self.forward_args)
+            p1, p2, p3 = len(priority1), len(priority2), len(priority3)
+            if p1:
+                assert p1 == 1
+                final_state_dict[kc] = priority1[kc]
+            elif p2:
+                assert p2 == 1
+                final_state_dict[kc] = priority2[kc]
+            elif p3:
+                assert p3 == 1
+                final_state_dict[kc] = priority3[kc]
+            else:
+                self.log_warn(
+                    f"Can't find any pretrained weights for '{kc}' ({tuple(vc.shape)})"
+                )
 
-    @classmethod
-    def create_classes(
-        cls,
-        *,
-        namespace: dict[str, Any],
-        module: type,
-        selected_names: list[str] = None,
-        required_base: type = nn.Module,
+        super().load_state_dict(final_state_dict, strict=False, assign=True)
+
+        # no_missmatch_state_dict = state_dict.copy()
+        # # Iterate on the new values
+        # for k, tensor in state_dict.items():
+        #     if not isinstance(tensor, torch.Tensor):
+        #         continue
+
+        #     self_tensor = curr_state_dict[k]
+        #     # Check shape of tensors
+        #     t_shape = tuple(tensor.shape)
+        #     s_shape = tuple(self_tensor.shape)
+        #     if t_shape != s_shape:
+        #         if np.prod(t_shape) == np.prod(s_shape):
+        #             # If the number of elements is the same, we can reshape
+        #             self.warn(
+        #                 f"Resolving shape missmatch - model {s_shape} -> weights {t_shape}"
+        #             )
+        #             no_missmatch_state_dict[k] = tensor.view_as(self_tensor)
+        #         else:
+        #             self.warn(
+        #                 f"Removing '{k}' because of shape missmatch - model {s_shape} -> weights {t_shape}"
+        #             )
+        #             del no_missmatch_state_dict[k]
+
+        # self.info("Loading state dict")
+        # super().load_state_dict(no_missmatch_state_dict, strict=strict, assign=assign)
+
+    def weight_accept(self, tensor: torch.Tensor) -> bool:
+        """
+        Check if the model can accept the weight tensor
+        """
+        # Get the first parameter's shape as a reference
+        for param in self.parameters(False):
+            if param.shape == tensor.shape:
+                return True
+            elif param.numel() == tensor.numel():
+                # If the number of elements matches, we can reshape
+                self.log_warn(
+                    f"Reshaping {tensor.shape=} to match model {param.shape=}"
+                )
+                return True
+        return False
+
+
+T = TypeVar("T", bound=Module)
+
+
+class ModuleList(nn.ModuleList, Module, Generic[T]):
+    def __getitem__(self, index: int) -> T:
+        return super().__getitem__(index)
+
+    def parameters(self, recurse: bool = True):
+        """Override to completely bypass the custom Module.parameters method"""
+        # For ModuleList, we want standard PyTorch behavior, not custom MyConf behavior
+        # This ensures parameters are found in nested modules
+        for param in self._parameters.values():
+            yield param
+        if recurse:
+            for module in self._modules.values():
+                yield from module.parameters(recurse=True)
+
+    def named_parameters(
+        self, prefix: str = "", recurse: bool = True, remove_duplicate: bool = True
     ):
-        super().create_classes(
-            namespace=namespace,
-            module=module,
-            selected_names=selected_names,
-            required_base=required_base,
+        """Override to completely bypass the custom Module.named_parameters method"""
+        gen = self._named_members(
+            lambda module: module._parameters.items(),
+            prefix=prefix,
+            recurse=recurse,
+            remove_duplicate=remove_duplicate,
         )
+        yield from gen
 
-    def __hash__(self):
-        return id(self)
+    def _ensure_all_modules_registered(self):
+        """For ModuleList, just ensure the modules are properly added"""
+        # Don't call parent _ensure_all_modules_registered as it interferes
+        pass
 
+    def __repr__(self):
+        """PyTorch-like hierarchical representation for ModuleList"""
+        if len(self) == 0:
+            return f"{self.__class__.__name__}()"
 
-Module.create_classes(namespace=globals(), module=nn.modules)
-
-
-class ModuleConfig(Base):
-    model_config = {"arbitrary_types_allowed": True, "extra": "allow"}
-
-    type: str = Field(default=None, validate_default=True)
-    train: bool = False
-
-    @field_validator("type", mode="before")
-    def validate_type(cls, value):
-        if value is None:
-            name = cls.__name__.split("Config")[0]
-            return name
-        return value
-
-    def merge(self, config: ModuleConfig | dict, **kwargs):
-        if isinstance(config, ModuleConfig):
-            # We are receiving a config
-            config = config.model_dump()
-
-        merged = {}
-        always_merger.merge(merged, self.model_dump(exclude_none=True))
-        always_merger.merge(merged, config)
-        always_merger.merge(merged, kwargs)
-
-        return self.__class__(**merged)
+        # Create hierarchical representation like PyTorch
+        lines = [f"{self.__class__.__name__}("]
+        for i, module in enumerate(self):
+            module_str = repr(module)
+            # Indent the module representation
+            if "\n" in module_str:
+                # Multi-line module: indent each line
+                module_lines = module_str.split("\n")
+                first_line = f"  ({i}): {module_lines[0]}"
+                lines.append(first_line)
+                for line in module_lines[1:]:
+                    lines.append(f"  {line}")
+            else:
+                # Single-line module
+                lines.append(f"  ({i}): {module_str}")
+        lines.append(")")
+        return "\n".join(lines)
 
 
 if __name__ == "__main__":
 
     class TestModule(Module):
-        def init(self):
-            self.linear = nn.Linear(1, 10)
-
-        @cached_property
-        def test_cache(self):
-            return 1
+        linear: nn.Linear = nn.Linear(1, 10)
 
         def forward(self, x):
             return self.linear(x)
 
     module = TestModule()
-
-    print(module.test_cache)
-
     print(module)

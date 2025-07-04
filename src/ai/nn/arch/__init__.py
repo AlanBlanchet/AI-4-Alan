@@ -1,11 +1,3 @@
-from ai.nn.arch.dqn import (DDQN, DQN, DQNConfig, DQNHardUpdate, DQNPolicy,
-                            DRQN, DualDQN,)
-from ai.nn.arch.repvgg import (RepVGG, RepVGGBlock, RepVGG_A,)
-from ai.nn.arch.transformer import (Block, Decoder, DecoderBlock, Encoder,
-                                    MultiHeadAttention, Transformer,)
-from ai.nn.arch.vgg import (VGG,)
+from .resnet.resnet import ResNet18, ResNet34, ResNet50, ResNet101, ResNet152
 
-__all__ = ['Block', 'DDQN', 'DQN', 'DQNConfig', 'DQNHardUpdate', 'DQNPolicy',
-           'DRQN', 'Decoder', 'DecoderBlock', 'DualDQN', 'Encoder',
-           'MultiHeadAttention', 'RepVGG', 'RepVGGBlock', 'RepVGG_A',
-           'Transformer', 'VGG']
+__all__ = ["ResNet18", "ResNet34", "ResNet50", "ResNet101", "ResNet152"]
